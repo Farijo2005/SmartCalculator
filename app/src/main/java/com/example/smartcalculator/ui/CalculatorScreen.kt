@@ -251,16 +251,7 @@ private fun DisplayPlaceholderCard(modifier: Modifier = Modifier) {
             .height(220.dp)
             .clip(androidx.compose.foundation.shape.RoundedCornerShape(28.8.dp))
             .background(gradient),
-    ) {
-        Text(
-            text = "标准",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(top = 16.dp, start = 20.dp),
-        )
-    }
+    ) {}
 }
 
 /**
