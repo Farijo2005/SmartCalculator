@@ -17,6 +17,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -30,7 +32,9 @@ import com.example.smartcalculator.ui.components.HeaderBar
 import com.example.smartcalculator.ui.components.HistoryDrawer
 import com.example.smartcalculator.ui.components.ModeDrawer
 import com.example.smartcalculator.ui.components.SettingsDrawer
+import com.example.smartcalculator.ui.theme.Background100
 import com.example.smartcalculator.ui.theme.Background200
+import com.example.smartcalculator.ui.theme.Background700
 import com.example.smartcalculator.ui.theme.Background800
 
 /**
@@ -225,49 +229,57 @@ private fun LandscapeContent(
 }
 
 /**
- * 显示区占位卡片：上方空白圆角卡片（设计稿第 2 张图）
+ * 显示区占位卡片：对齐 HTML 设计稿样式
+ *   style="background: linear-gradient(180deg, var(--apple-card) 0%, var(--apple-secondary) 100%);
+ *          box-shadow: var(--shadow-sm) inset;"
+ *   h-56 = 224dp (close to our 220dp)
  */
 @Composable
 private fun DisplayPlaceholderCard(modifier: Modifier = Modifier) {
-    GlassCard(
-        modifier = modifier.height(220.dp),
-        cornerRadius = 28.8.dp,
-        blurRadius = 10.dp,
+    val dark = isSystemInDarkTheme()
+    // light: card = white, secondary = Background200
+    // dark:  card = Background800, secondary = Background800
+    val top: Color    = if (dark) Background800 else Color(0xFFFFFFFF)
+    val bottom: Color = if (dark) Background700 else Background100
+    val gradient = Brush.verticalGradient(
+        0.0f to top,
+        1.0f to bottom,
+    )
+    androidx.compose.foundation.layout.Box(
+        modifier = modifier
+            .height(220.dp)
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(28.8.dp))
+            .background(gradient),
     ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.BottomEnd,
-        ) {
-            // 占位：只显示模式标签在左上角
-            Text(
-                text = "标准",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(top = 16.dp, start = 20.dp),
-            )
-        }
+        Text(
+            text = "标准",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(top = 16.dp, start = 20.dp),
+        )
     }
 }
 
 /**
- * 按键区占位卡片：下方空白圆角卡片区域（设计稿第 2 张图）
+ * 按键区占位卡片：下方空白卡片（样式与显示卡片一致，opacity 0.6）
  */
 @Composable
 private fun KeypadPlaceholderCard(modifier: Modifier = Modifier) {
-    GlassCard(
-        modifier = modifier.height(420.dp),
-        cornerRadius = 28.8.dp,
-        blurRadius = 10.dp,
-    ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center,
-        ) {
-            // 空白占位（后续步骤填充按键）
-        }
-    }
+    val dark = isSystemInDarkTheme()
+    val top: Color    = (if (dark) Background800 else Color(0xFFFFFFFF)).copy(alpha = 0.85f)
+    val bottom: Color = (if (dark) Background700 else Background100).copy(alpha = 0.60f)
+    val gradient = Brush.verticalGradient(
+        0.0f to top,
+        1.0f to bottom,
+    )
+    androidx.compose.foundation.layout.Box(
+        modifier = modifier
+            .height(420.dp)
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(28.8.dp))
+            .background(gradient),
+    ) {}
 }
 
 @Composable
@@ -285,24 +297,30 @@ private fun androidx.compose.foundation.layout.BoxScope.DrawersLayer(
         onDismiss = onCloseDrawers,
         modifier = Modifier.fillMaxSize().align(Alignment.TopStart),
     )
+    // 菜单抽屉：与顶部按钮（HeaderBar top=24, button=36dp）留出充足间距
     ModeDrawer(
         visible = isMenuOpen,
         menuOrder = state.menuOrder,
         currentMode = state.mode,
         onPickMode = cb.onPickMode,
         onAbout = onAbout,
-        modifier = Modifier.align(Alignment.TopStart).padding(start = 12.dp, top = 80.dp),
+        modifier = Modifier.align(Alignment.TopStart).padding(start = 12.dp, top = 108.dp),
     )
+    // 历史记录抽屉：同左
     HistoryDrawer(
         visible = isHistoryOpen,
         history = state.history,
         onPick = cb.onPickHistory,
         onClear = cb.onClearHistory,
-        modifier = Modifier.align(Alignment.TopEnd).padding(end = 12.dp, top = 80.dp),
+        modifier = Modifier.align(Alignment.TopEnd).padding(end = 12.dp, top = 108.dp),
     )
+    // 设置抽屉：同左
     SettingsDrawer(
         visible = isSettingsOpen,
         onClose = cb.onCloseSettings,
-        modifier = Modifier.align(Alignment.Center),
+        modifier = Modifier
+            .fillMaxSize()
+            .align(Alignment.TopStart)
+            .padding(start = 20.dp, end = 20.dp, top = 108.dp, bottom = 20.dp),
     )
 }

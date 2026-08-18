@@ -22,28 +22,36 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalDensity
 
-/** 用于检测当前主题是否为深色背景。 */
+/** 用于检测当前主题是否为深色背景（internal 供 Drawers 复用）。 */
 @Composable
-private fun isDarkTheme(): Boolean =
+internal fun isDarkTheme(): Boolean =
     MaterialTheme.colorScheme.background.luminance() < 0.5f
 
 private fun Color.luminance(): Float =
     0.299f * red + 0.587f * green + 0.114f * blue
 
 /**
- * Apple iOS 风格液态玻璃容器（强对比度版本）。
+ * Apple iOS 液态玻璃容器 —— 严格对齐 HTML `.liquid-glass` 结构比例：
  *
- * 对应 HTML 设计稿 .liquid-glass 的 Compose 等价实现。
- * 由于 Compose 没有 CSS backdrop-filter 真正对下层内容做模糊，
- * 这里采用"高对比度半透明蒙层 + 顶部白边 + 阴影"的组合来还原
- * 液态玻璃的视觉质感，在纯色背景上也能明显分辨。
+ *   background:              rgba(255,255,255,0.22)        // 乳白蒙层（比例基准）
+ *   backdrop-filter:         blur(20px) saturate(180%)     // 用 saturate 对角渐变近似
+ *   border-top    : 1px solid rgba(255,255,255, 0.55)
+ *   border-left/rt: 1px solid rgba(255,255,255, 0.35)
+ *   border-bottom : 1px solid rgba(0,0,0,     0.06)
+ *   box-shadow   : var(--shadow-lg)
+ *
+ * 注意：Compose 没有 CSS 原生 backdrop-filter。为了在 --apple-secondary（浅灰#F2F2F7）
+ * 背景上仍能呈现"玻璃薄片"的层次感，我们在保留四边亮度比例（top最亮 ≈ 1.57×side、
+ * side ≈ 5.8×bottom）的前提下，对绝对 alpha 做一个 ≈1.22 倍的轻微补偿。
  */
 @Composable
 fun GlassCard(
@@ -54,22 +62,40 @@ fun GlassCard(
     content: @Composable () -> Unit,
 ) {
     val dark = isDarkTheme()
-    // ---------- Tint（核心乳白蒙层）----------
-    // 在 light 下：不低于 0.45 alpha，保证在 #F2F2F7 背景上肉眼能看见胶囊形状
-    // 在 dark  下：0.18 alpha，够用即可
+
+    // ------- 按比例对齐 HTML，浅灰背景下做轻微可见度补偿（×1.22）-------
+    // HTML tint:        light 0.22 → 补偿 0.27
+    //                   dark  0.16 → 补偿 0.195
     val actualTint = when {
         tint != Color.Unspecified -> tint
-        dark -> Color(0xFFFFFFFF).copy(alpha = 0.18f)
-        else -> Color(0xFFFFFFFF).copy(alpha = 0.55f)
+        dark -> Color(0xFFFFFFFF).copy(alpha = 0.195f)
+        else -> Color(0xFFFFFFFF).copy(alpha = 0.27f)
     }
-    val bTop    = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.25f) else Color(0xFFFFFFFF).copy(alpha = 0.85f)
-    val bSide   = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.16f) else Color(0xFFFFFFFF).copy(alpha = 0.55f)
-    val bBottom = if (dark) Color(0xFF000000).copy(alpha = 0.18f) else Color(0xFF000000).copy(alpha = 0.10f)
-    val elevation: Dp = if (dark) 8.dp else 12.dp  // shadow-lg，投影清楚可见
+    // border-top:    rgba(255,255,255, 0.55) → 补偿 light 0.67 / dark 0.27
+    val bTop    = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.27f) else Color(0xFFFFFFFF).copy(alpha = 0.67f)
+    // border-left/right: rgba(255,255,255, 0.35) → 补偿 light 0.43 / dark 0.18
+    val bSide   = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.18f) else Color(0xFFFFFFFF).copy(alpha = 0.43f)
+    // border-bottom: rgba(0,0,0, 0.06) → 补偿 light 0.075 / dark 0.27
+    val bBottom = if (dark) Color(0xFF000000).copy(alpha = 0.27f) else Color(0xFF000000).copy(alpha = 0.075f)
+
+    // shadow-lg（HTML 精确值，不做补偿）：
+    //   0 8px 24px -8px rgba(0,0,0,0.08),  0 4px 8px -4px rgba(0,0,0,0.05)
+    val elevation: Dp = if (dark) 10.dp else 12.dp
+    val ambient = if (dark) Color(0xFF000000).copy(alpha = 0.50f) else Color(0xFF000000).copy(alpha = 0.08f)
+    val spot    = if (dark) Color(0xFF000000).copy(alpha = 0.40f) else Color(0xFF000000).copy(alpha = 0.05f)
 
     val shape: Shape = RoundedCornerShape(cornerRadius)
-    val density = androidx.compose.ui.platform.LocalDensity.current
+    val density = LocalDensity.current
     val radiusPx = with(density) { cornerRadius.toPx() }
+
+    // saturate(180%) 近似：左上偏亮白（稍微加大高光，模拟玻璃上边缘的镜面反射）
+    // → 右下偏淡，衬托通透感
+    val saturateBrush = Brush.linearGradient(
+        0.00f to Color(0xFFFFFFFF).copy(alpha = if (dark) 0.085f else 0.125f),
+        0.25f to Color(0xFFFFFFFF).copy(alpha = if (dark) 0.045f else 0.070f),
+        0.60f to Color(0xFFFFFFFF).copy(alpha = if (dark) 0.025f else 0.035f),
+        1.00f to Color(0x00FFFFFF),
+    )
 
     Box(
         modifier = modifier
@@ -77,22 +103,23 @@ fun GlassCard(
                 elevation = elevation,
                 shape = shape,
                 clip = false,
-                ambientColor = Color(0xFF000000).copy(alpha = if (dark) 0.45f else 0.18f),
-                spotColor    = Color(0xFF000000).copy(alpha = if (dark) 0.55f else 0.14f),
+                ambientColor = ambient,
+                spotColor = spot,
             )
             .clip(shape)
             .background(actualTint)
+            .background(saturateBrush)   // saturate(180%) 视觉等效
             .drawBehind {
                 val w = size.width
                 val h = size.height
                 // top
-                drawLine(bTop,    Offset(radiusPx, 0.5f),          Offset(w - radiusPx, 0.5f),          strokeWidth = 1f)
+                drawLine(bTop,    Offset(radiusPx, 0.5f),    Offset(w - radiusPx, 0.5f),    1f)
                 // bottom
-                drawLine(bBottom, Offset(radiusPx, h - 0.5f),       Offset(w - radiusPx, h - 0.5f),       strokeWidth = 1f)
+                drawLine(bBottom, Offset(radiusPx, h - 0.5f), Offset(w - radiusPx, h - 0.5f), 1f)
                 // left
-                drawLine(bSide,   Offset(0.5f,       radiusPx),     Offset(0.5f,       h - radiusPx),     strokeWidth = 1f)
+                drawLine(bSide,   Offset(0.5f, radiusPx),    Offset(0.5f, h - radiusPx),    1f)
                 // right
-                drawLine(bSide,   Offset(w - 0.5f,   radiusPx),     Offset(w - 0.5f,   h - radiusPx),     strokeWidth = 1f)
+                drawLine(bSide,   Offset(w - 0.5f, radiusPx),Offset(w - 0.5f, h - radiusPx),1f)
             },
     ) {
         content()
@@ -100,13 +127,17 @@ fun GlassCard(
 }
 
 /**
- * 圆形玻璃按钮（头部菜单 / 历史 / 设置）。
+ * 圆形玻璃按钮（菜单 / 历史 / 设置） —— 结构对齐 HTML `.glass-btn`：
  *
- * 对应 HTML .glass-btn：
- *   background       = rgba(255,255,255, 0.40~0.55)  （肉眼可辨的圆形背景）
- *   border           = 1px rgba(255,255,255, 0.60)
- *   box-shadow       = inset 0 1px 0 rgba(255,255,255, 0.70), shadow-sm outside
- *   color (foreground) = onBackground (图标深色/浅色清晰)
+ *   background:          rgba(255,255,255, 0.32)   // 基础
+ *   :hover               background rgba(, 0.42) + brightness(1.04)
+ *   border:              1px solid rgba(255,255,255, 0.45)
+ *   box-shadow:          inset 0 1px 0 rgba(255,255,255, 0.55), var(--shadow-sm)
+ *   :active transform:   scale(0.94)
+ *   color:               var(--apple-foreground)
+ *
+ * 浅灰背景下与 GlassCard 同步做 ×1.22 的可见度补偿，并在 pressed 态用"更深的
+ * 背景 + brightness↑"模拟 :hover 的高亮反馈。
  */
 @Composable
 fun GlassCircleButton(
@@ -117,15 +148,30 @@ fun GlassCircleButton(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.94f else 1.0f, tween(140), label = "btnScale")
+    val scale by animateFloatAsState(
+        if (pressed) 0.94f else 1.0f,
+        tween(durationMillis = 150),
+        label = "glassBtnScale",
+    )
     val dark = isDarkTheme()
 
-    val bg             = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.24f) else Color(0xFFFFFFFF).copy(alpha = 0.55f)
-    val borderC        = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.30f) else Color(0xFFFFFFFF).copy(alpha = 0.65f)
-    val innerHighlight = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.18f) else Color(0xFFFFFFFF).copy(alpha = 0.75f)
-    val elevation      = if (dark) 3.dp else 4.dp
+    // HTML 基础 × 1.22 补偿；pressed 态升至 HTML :hover 的 0.42（再×1.22）
+    val bgAlpha = when {
+        pressed -> if (dark) 0.32f else 0.51f       // HTML :hover 0.42 × 1.22 ≈ 0.51
+        else    -> if (dark) 0.245f else 0.39f       // HTML idle   0.32 × 1.22 ≈ 0.39
+    }
+    val bg = Color(0xFFFFFFFF).copy(alpha = bgAlpha)
+    val borderC        = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.34f) else Color(0xFFFFFFFF).copy(alpha = 0.55f) // 0.45×1.22
+    val innerHighlight = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.22f) else Color(0xFFFFFFFF).copy(alpha = 0.67f) // 0.55×1.22
+
+    // shadow-sm（HTML 精确值不补偿）：
+    //   0 1px 2px 0 rgba(0,0,0,0.05), 0 1px 3px -1px rgba(0,0,0,0.05)
+    val elevation = if (dark) 2.dp else 3.dp
+    val amb = if (dark) Color(0xFF000000).copy(alpha = 0.36f) else Color(0xFF000000).copy(alpha = 0.05f)
+    val spt = if (dark) Color(0xFF000000).copy(alpha = 0.36f) else Color(0xFF000000).copy(alpha = 0.05f)
+
     val shape = RoundedCornerShape(50)
-    val density = androidx.compose.ui.platform.LocalDensity.current
+    val density = LocalDensity.current
     val sizePx = with(density) { size.toPx() }
 
     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
@@ -137,22 +183,24 @@ fun GlassCircleButton(
                     elevation = elevation,
                     shape = shape,
                     clip = false,
-                    ambientColor = Color(0xFF000000).copy(alpha = if (dark) 0.40f else 0.22f),
-                    spotColor    = Color(0xFF000000).copy(alpha = if (dark) 0.50f else 0.16f),
+                    ambientColor = amb,
+                    spotColor = spt,
                 )
                 .clip(shape)
                 .background(bg)
                 .border(width = 1.dp, color = borderC, shape = shape)
                 .drawBehind {
-                    val inset = sizePx * 0.15f
+                    // inset 0 1px 0 rgba(255,255,255,0.55) —— 圆形内只画中心 60% 段，
+                    // 两端留出圆弧空间，防止直线延伸到圆边外
+                    val insetX = sizePx * 0.20f
                     drawLine(
                         color = innerHighlight,
-                        start = Offset(inset, 0.5f),
-                        end = Offset(sizePx - inset, 0.5f),
+                        start = Offset(insetX, 0.5f),
+                        end = Offset(sizePx - insetX, 0.5f),
                         strokeWidth = 1f,
                     )
                 }
-                .clickable(interaction, indication = null) { onClick() },
+                .clickable(interactionSource = interaction, indication = null) { onClick() },
             contentAlignment = Alignment.Center,
         ) {
             content()
@@ -161,7 +209,17 @@ fun GlassCircleButton(
 }
 
 /**
- * 抽屉内菜单项按钮：选中态使用 primary 填充。
+ * 抽屉内菜单项 —— 结构对齐 HTML `.drawer-item`：
+ *
+ *   padding:       px-3 py-2.5  (12.dp × 10.dp)
+ *   border-radius: var(--apple-radius-sm) = 0.6rem = 9.6.dp
+ *   :hover         background: rgba(255,255,255, 0.35)
+ *   :active        background: rgba(255,255,255, 0.45); scale(0.985)
+ *
+ * 选中态（selected）使用 primary 背景 + onPrimary 前景，对应 HTML 中科学模式被选中时
+ *   `background-color: var(--apple-primary); color: var(--apple-primary-foreground);`
+ *
+ * 与 GlassCard 同样做 ×1.22 的浅灰背景可见度补偿。
  */
 @Composable
 fun GlassItemButton(
@@ -172,22 +230,37 @@ fun GlassItemButton(
     content: @Composable () -> Unit,
 ) {
     val dark = isDarkTheme()
-    val baseBg = if (selected) MaterialTheme.colorScheme.primary
-    else Color.White.copy(alpha = if (dark) 0.10f else 0.35f)
-    val fg = if (selected) MaterialTheme.colorScheme.onPrimary
-    else MaterialTheme.colorScheme.onBackground
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.985f else 1.0f, tween(140), label = "itemScale")
-    val bg = if (pressed) baseBg.copy(alpha = 0.85f) else baseBg
+
+    // HTML hover 0.35 → ×1.22 ≈ 0.43   active 0.45 → ×1.22 ≈ 0.55
+    val hoveredAlpha  = if (dark) 0.27f else 0.43f
+    val pressedAlpha  = if (dark) 0.37f else 0.55f
+    val idleAlpha     = if (dark) 0.0f else 0.0f
+
+    val baseBgIdle  = if (selected) MaterialTheme.colorScheme.primary
+    else Color.White.copy(alpha = idleAlpha)
+    val baseBg = when {
+        pressed -> if (selected) baseBgIdle.copy(alpha = 0.92f) else Color.White.copy(alpha = pressedAlpha)
+        else    -> baseBgIdle
+    }
+    val fg = if (selected) MaterialTheme.colorScheme.onPrimary
+    else MaterialTheme.colorScheme.onBackground
+
+    val scale by animateFloatAsState(
+        if (pressed) 0.985f else 1.0f,
+        tween(durationMillis = 150),
+        label = "itemBtnScale",
+    )
+
     val shape = RoundedCornerShape(cornerRadius)
     CompositionLocalProvider(LocalContentColor provides fg) {
         Box(
             modifier = modifier
                 .scale(scale)
                 .clip(shape)
-                .background(bg)
-                .clickable(interaction, indication = null) { onClick() },
+                .background(baseBg)
+                .clickable(interactionSource = interaction, indication = null) { onClick() },
         ) {
             Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
                 content()
