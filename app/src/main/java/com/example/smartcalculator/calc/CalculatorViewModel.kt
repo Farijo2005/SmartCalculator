@@ -87,6 +87,14 @@ class CalculatorViewModel(application: Application) : AndroidViewModel(applicati
  */
 enum class CalcMode { Standard, Scientific, Programmer, Statistics }
 
+/** 模式 → 中文显示名（菜单抽屉 & Header 共用） */
+fun CalcMode.displayName(): String = when (this) {
+    CalcMode.Standard   -> "标准"
+    CalcMode.Scientific -> "科学"
+    CalcMode.Programmer -> "程序员"
+    CalcMode.Statistics -> "统计"
+}
+
 /**
  * 历史记录项（暂时只用展示，后续计算功能完善后再写入）
  */

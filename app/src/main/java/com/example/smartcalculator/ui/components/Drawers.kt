@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.smartcalculator.calc.CalcMode
 import com.example.smartcalculator.calc.HistoryItem
+import com.example.smartcalculator.calc.displayName
 
 /**
  * HTML `cubic-bezier(0.16, 1, 0.3, 1)` 的精确等效。
@@ -397,11 +398,4 @@ fun ModeIcon(mode: CalcMode) {
 @Composable
 fun AboutIcon() {
     Text("i", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-}
-
-fun CalcMode.displayName(): String = when (this) {
-    CalcMode.Standard   -> "标准"
-    CalcMode.Scientific -> "科学"
-    CalcMode.Programmer -> "程序员"
-    CalcMode.Statistics -> "统计"
 }

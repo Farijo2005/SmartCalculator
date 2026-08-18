@@ -26,6 +26,7 @@ import com.example.smartcalculator.calc.CalcMode
 import com.example.smartcalculator.calc.CalculatorUiState
 import com.example.smartcalculator.calc.CalculatorViewModel
 import com.example.smartcalculator.calc.HistoryItem
+import com.example.smartcalculator.calc.displayName
 import com.example.smartcalculator.ui.components.DrawerBackdrop
 import com.example.smartcalculator.ui.components.GlassCard
 import com.example.smartcalculator.ui.components.HeaderBar
@@ -138,7 +139,7 @@ private fun PortraitContent(
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             HeaderBar(
-                title = "科学计算器",
+                title = state.mode.displayName(),
                 onMenuClick = onMenuClick,
                 onHistoryClick = onHistoryClick,
                 onSettingsClick = onSettingsClick,
@@ -191,7 +192,7 @@ private fun LandscapeContent(
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             HeaderBar(
-                title = "科学计算器",
+                title = state.mode.displayName(),
                 onMenuClick = onMenuClick,
                 onHistoryClick = onHistoryClick,
                 onSettingsClick = onSettingsClick,

@@ -1,11 +1,14 @@
 package com.example.smartcalculator.ui.components
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -14,9 +17,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -51,32 +55,48 @@ fun HeaderBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.Top,
     ) {
-        // 左：菜单触发器（液态玻璃胶囊）
+        // 左：菜单触发器（液态玻璃胶囊 —— 整个胶囊区域都可以点击）
         GlassCard(
             cornerRadius = 32.dp,
             blurRadius = 20.dp,
         ) {
+            val interactionSource = remember { MutableInteractionSource() }
             Row(
-                modifier = Modifier.padding(6.dp),
+                modifier = Modifier
+                    .padding(6.dp)
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = null,   // 液态玻璃自带视觉，不要 Material 水波纹
+                        role = Role.Button,
+                        onClick = onMenuClick,
+                    )
+                    .padding(horizontal = 2.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                GlassCircleButton(
-                    size = 44.dp,
-                    onClick = onMenuClick,
+                // 圆形液态玻璃图标（纯装饰，点击由外层 Row 统一处理）
+                Box(
+                    modifier = Modifier.size(44.dp),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Box(modifier = Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                        MenuIcon(
-                            size = 20.dp,
-                            tint = MaterialTheme.colorScheme.onBackground,
-                        )
+                    GlassCard(
+                        cornerRadius = 999.dp,
+                        blurRadius = 16.dp,
+                        modifier = Modifier.size(44.dp),
+                    ) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            MenuIcon(
+                                size = 20.dp,
+                                tint = MaterialTheme.colorScheme.onBackground,
+                            )
+                        }
                     }
                 }
-                Spacer(modifier = Modifier.width(2.dp))
+                Spacer(modifier = Modifier.width(4.dp))
                 Text(
                     text = title,
                     color = MaterialTheme.colorScheme.onBackground,
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-                    modifier = Modifier.padding(end = 12.dp),
+                    modifier = Modifier.padding(end = 16.dp),
                 )
             }
         }
