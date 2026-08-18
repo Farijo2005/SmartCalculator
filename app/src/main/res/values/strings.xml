@@ -1,0 +1,23 @@
+<resources>
+    <string name="app_name">科学计算器</string>
+    <string name="app_name_en">SmartCalculator</string>
+    <string name="mode_standard">标准</string>
+    <string name="mode_scientific">科学</string>
+    <string name="mode_programmer">程序员</string>
+    <string name="mode_statistics">统计</string>
+    <string name="drawer_mode">模式</string>
+    <string name="drawer_history">历史记录</string>
+    <string name="drawer_settings">设置</string>
+    <string name="settings_appearance">外观</string>
+    <string name="settings_accent">主题色</string>
+    <string name="settings_background">背景</string>
+    <string name="settings_menu_order">菜单排序</string>
+    <string name="settings_help">帮助</string>
+    <string name="theme_light">浅色</string>
+    <string name="theme_dark">深色</string>
+    <string name="theme_auto">自动</string>
+    <string name="action_about">关于</string>
+    <string name="action_close">关闭</string>
+    <string name="action_clear_history">清空历史</string>
+    <string name="state_empty_history">暂无历史记录</string>
+</resources>
