@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import com.example.smartcalculator.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,6 +24,12 @@ class CalculatorViewModel(application: Application) : AndroidViewModel(applicati
     // ===== 模式切换 =====
     fun setMode(mode: CalcMode) {
         _uiState.update { it.copy(mode = mode) }
+        persist()
+    }
+
+    // ===== 主题模式 =====
+    fun setThemeMode(mode: ThemeMode) {
+        _uiState.update { it.copy(themeMode = mode) }
         persist()
     }
 
@@ -50,6 +57,7 @@ class CalculatorViewModel(application: Application) : AndroidViewModel(applicati
         with(prefs.edit()) {
             putString("mode", s.mode.name)
             putString("menu_order", s.menuOrder.joinToString(",") { it.name })
+            putString("theme_mode", s.themeMode.name)
             apply()
         }
     }
@@ -63,10 +71,14 @@ class CalculatorViewModel(application: Application) : AndroidViewModel(applicati
             ?.mapNotNull { runCatching { CalcMode.valueOf(it) }.getOrNull() }
             ?.takeIf { it.isNotEmpty() }
             ?: listOf(CalcMode.Standard, CalcMode.Scientific, CalcMode.Programmer, CalcMode.Statistics)
+        val themeMode = prefs.getString("theme_mode", null)
+            ?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
+            ?: ThemeMode.Auto
         return CalculatorUiState(
             mode = mode,
             menuOrder = menuOrder,
             history = emptyList(),
+            themeMode = themeMode,
         )
     }
 
@@ -116,4 +128,5 @@ data class CalculatorUiState(
         CalcMode.Programmer,
         CalcMode.Statistics,
     ),
+    val themeMode: ThemeMode = ThemeMode.Auto,
 )

@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import com.example.smartcalculator.calc.CalcMode
 import com.example.smartcalculator.calc.HistoryItem
 import com.example.smartcalculator.calc.displayName
+import com.example.smartcalculator.ui.theme.ThemeMode
 
 /**
  * HTML `cubic-bezier(0.16, 1, 0.3, 1)` 的精确等效。
@@ -324,6 +325,8 @@ fun HistoryDrawer(
 @Composable
 fun SettingsDrawer(
     visible: Boolean,
+    themeMode: ThemeMode,
+    onSetThemeMode: (ThemeMode) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -374,12 +377,81 @@ fun SettingsDrawer(
                     CloseIcon(size = 18.dp, tint = MaterialTheme.colorScheme.onBackground)
                 }
             }
+
             Spacer(modifier = Modifier.height(24.dp))
-            Text(
-                text = "暂无可配置项",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            SectionLabel(text = "外观")
+
+            // 三选一分段控件（液态玻璃风格）
+            ThemeModeSelector(
+                current = themeMode,
+                onPick = onSetThemeMode,
             )
+        }
+    }
+}
+
+/**
+ * 主题模式分段选择器：浅色 / 深色 / 跟随系统
+ */
+@Composable
+private fun ThemeModeSelector(
+    current: ThemeMode,
+    onPick: (ThemeMode) -> Unit,
+) {
+    val options = listOf(
+        ThemeMode.Light to "浅色",
+        ThemeMode.Dark to "深色",
+        ThemeMode.Auto to "跟随系统",
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(14.4.dp))
+            .background(
+                if (isDarkTheme()) Color(0xFFFFFFFF).copy(alpha = 0.08f)
+                else Color(0xFF000000).copy(alpha = 0.05f),
+            ),
+    ) {
+        options.forEach { (mode, label) ->
+            val selected = mode == current
+            val interaction = remember { MutableInteractionSource() }
+            val pressed by interaction.collectIsPressedAsState()
+            val scale by animateFloatAsState(
+                if (pressed) 0.97f else 1.0f,
+                tween(120),
+                label = "themeOptScale",
+            )
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .scale(scale)
+                    .clip(RoundedCornerShape(11.2.dp))
+                    .background(
+                        when {
+                            selected && isDarkTheme() -> Color(0xFFFFFFFF).copy(alpha = 0.18f)
+                            selected -> Color(0xFF000000).copy(alpha = 0.08f)
+                            else -> Color.Transparent
+                        },
+                    )
+                    .clickable(
+                        interactionSource = interaction,
+                        indication = null,
+                        onClick = { onPick(mode) },
+                    )
+                    .padding(vertical = 10.dp, horizontal = 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    ),
+                    color = if (selected) MaterialTheme.colorScheme.onBackground
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

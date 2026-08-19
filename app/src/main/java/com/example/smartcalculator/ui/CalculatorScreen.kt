@@ -33,10 +33,12 @@ import com.example.smartcalculator.ui.components.HeaderBar
 import com.example.smartcalculator.ui.components.HistoryDrawer
 import com.example.smartcalculator.ui.components.ModeDrawer
 import com.example.smartcalculator.ui.components.SettingsDrawer
+import com.example.smartcalculator.ui.components.isDarkTheme
 import com.example.smartcalculator.ui.theme.Background100
 import com.example.smartcalculator.ui.theme.Background200
 import com.example.smartcalculator.ui.theme.Background700
 import com.example.smartcalculator.ui.theme.Background800
+import com.example.smartcalculator.ui.theme.ThemeMode
 
 /**
  * 主屏幕（阶段一）：只保留框架。
@@ -59,7 +61,7 @@ fun CalculatorScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-    val screenBg: Color = if (isSystemInDarkTheme()) Background800 else Background200
+    val screenBg: Color = if (isDarkTheme()) Background800 else Background200
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -82,6 +84,7 @@ fun CalculatorScreen(
                     onPickHistory = { _: HistoryItem -> onCloseDrawers() },
                     onClearHistory = viewModel::clearHistory,
                     onCloseSettings = onCloseDrawers,
+                    onSetThemeMode = viewModel::setThemeMode,
                 )
             }
 
@@ -121,6 +124,7 @@ private data class SharedCallbacks(
     val onPickHistory: (HistoryItem) -> Unit,
     val onClearHistory: () -> Unit,
     val onCloseSettings: () -> Unit,
+    val onSetThemeMode: (ThemeMode) -> Unit,
 )
 
 @Composable
@@ -309,6 +313,8 @@ private fun androidx.compose.foundation.layout.BoxScope.DrawersLayer(
     // 设置抽屉：同左
     SettingsDrawer(
         visible = isSettingsOpen,
+        themeMode = state.themeMode,
+        onSetThemeMode = cb.onSetThemeMode,
         onClose = cb.onCloseSettings,
         modifier = Modifier
             .fillMaxSize()

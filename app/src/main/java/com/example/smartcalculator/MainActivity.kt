@@ -38,7 +38,7 @@ class MainActivity : ComponentActivity() {
             )
             val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-            SmartCalculatorTheme {
+            SmartCalculatorTheme(themeMode = state.themeMode) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
