@@ -67,6 +67,10 @@ val BgGray200 = Background300
 val BgBlack = Color(0xFF1C1C1E)
 val BgMidnight = Color(0xFF0A0A0C)
 
+// Apple-style dark palette (blue-tinted dark, not pure black)
+val BackgroundAppleDark = Color(0xFF303842)   // 深色主题背景
+val PanelAppleDark      = Color(0xFF38414D)   // 深色面板（卡片）
+
 // ===== Semantic defaults =====
 val PrimaryLight = Brand500
 val PrimaryForegroundLight = Background50

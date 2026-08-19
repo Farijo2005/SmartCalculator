@@ -1,7 +1,6 @@
 package com.example.smartcalculator.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -34,10 +33,10 @@ import com.example.smartcalculator.ui.components.HistoryDrawer
 import com.example.smartcalculator.ui.components.ModeDrawer
 import com.example.smartcalculator.ui.components.SettingsDrawer
 import com.example.smartcalculator.ui.components.isDarkTheme
+import com.example.smartcalculator.ui.theme.BackgroundAppleDark
 import com.example.smartcalculator.ui.theme.Background100
 import com.example.smartcalculator.ui.theme.Background200
-import com.example.smartcalculator.ui.theme.Background700
-import com.example.smartcalculator.ui.theme.Background800
+import com.example.smartcalculator.ui.theme.PanelAppleDark
 import com.example.smartcalculator.ui.theme.ThemeMode
 
 /**
@@ -61,7 +60,7 @@ fun CalculatorScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-    val screenBg: Color = if (isDarkTheme()) Background800 else Background200
+    val screenBg: Color = if (isDarkTheme()) BackgroundAppleDark else Background200
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -241,11 +240,11 @@ private fun LandscapeContent(
  */
 @Composable
 private fun DisplayPlaceholderCard(modifier: Modifier = Modifier) {
-    val dark = isSystemInDarkTheme()
+    val dark = isDarkTheme()
     // light: card = white, secondary = Background200
-    // dark:  card = Background800, secondary = Background800
-    val top: Color    = if (dark) Background800 else Color(0xFFFFFFFF)
-    val bottom: Color = if (dark) Background700 else Background100
+    // dark:  card = PanelAppleDark (#38414D), secondary = 略深
+    val top: Color    = if (dark) PanelAppleDark else Color(0xFFFFFFFF)
+    val bottom: Color = if (dark) Color(0xFF2C343E) else Background100
     val gradient = Brush.verticalGradient(
         0.0f to top,
         1.0f to bottom,
@@ -263,9 +262,9 @@ private fun DisplayPlaceholderCard(modifier: Modifier = Modifier) {
  */
 @Composable
 private fun KeypadPlaceholderCard(modifier: Modifier = Modifier) {
-    val dark = isSystemInDarkTheme()
-    val top: Color    = (if (dark) Background800 else Color(0xFFFFFFFF)).copy(alpha = 0.85f)
-    val bottom: Color = (if (dark) Background700 else Background100).copy(alpha = 0.60f)
+    val dark = isDarkTheme()
+    val top: Color    = (if (dark) PanelAppleDark else Color(0xFFFFFFFF)).copy(alpha = if (dark) 0.92f else 0.85f)
+    val bottom: Color = (if (dark) Color(0xFF2C343E) else Background100).copy(alpha = if (dark) 0.92f else 0.60f)
     val gradient = Brush.verticalGradient(
         0.0f to top,
         1.0f to bottom,

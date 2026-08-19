@@ -66,17 +66,18 @@ fun GlassCard(
     // ------- 按比例对齐 HTML，浅灰背景下做轻微可见度补偿（×1.22）-------
     // HTML tint:        light 0.22 → 补偿 0.27
     //                   dark  0.16 → 补偿 0.195
+    // 深色模式：tint 使用蓝色调半透明（而非白色），避免"白色矩形"
     val actualTint = when {
         tint != Color.Unspecified -> tint
-        dark -> Color(0xFFFFFFFF).copy(alpha = 0.195f)
+        dark -> Color(0xFF50606F).copy(alpha = 0.55f)  // 蓝灰色半透明，与 #303842 背景融合
         else -> Color(0xFFFFFFFF).copy(alpha = 0.27f)
     }
     // border-top:    rgba(255,255,255, 0.55) → 补偿 light 0.67 / dark 0.27
-    val bTop    = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.27f) else Color(0xFFFFFFFF).copy(alpha = 0.67f)
+    val bTop    = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.22f) else Color(0xFFFFFFFF).copy(alpha = 0.67f)
     // border-left/right: rgba(255,255,255, 0.35) → 补偿 light 0.43 / dark 0.18
-    val bSide   = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.18f) else Color(0xFFFFFFFF).copy(alpha = 0.43f)
+    val bSide   = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.15f) else Color(0xFFFFFFFF).copy(alpha = 0.43f)
     // border-bottom: rgba(0,0,0, 0.06) → 补偿 light 0.075 / dark 0.27
-    val bBottom = if (dark) Color(0xFF000000).copy(alpha = 0.27f) else Color(0xFF000000).copy(alpha = 0.075f)
+    val bBottom = if (dark) Color(0xFF000000).copy(alpha = 0.35f) else Color(0xFF000000).copy(alpha = 0.075f)
 
     // shadow-lg（HTML 精确值，不做补偿）：
     //   0 8px 24px -8px rgba(0,0,0,0.08),  0 4px 8px -4px rgba(0,0,0,0.05)
@@ -88,13 +89,13 @@ fun GlassCard(
     val density = LocalDensity.current
     val radiusPx = with(density) { cornerRadius.toPx() }
 
-    // saturate(180%) 近似：左上偏亮白（稍微加大高光，模拟玻璃上边缘的镜面反射）
-    // → 右下偏淡，衬托通透感
+    // saturate(180%) 近似：左上偏亮白 → 右下淡
+    // 深色模式：终点用完全透明（而非透明白），防止出现白色矩形边框
     val saturateBrush = Brush.linearGradient(
-        0.00f to Color(0xFFFFFFFF).copy(alpha = if (dark) 0.085f else 0.125f),
-        0.25f to Color(0xFFFFFFFF).copy(alpha = if (dark) 0.045f else 0.070f),
-        0.60f to Color(0xFFFFFFFF).copy(alpha = if (dark) 0.025f else 0.035f),
-        1.00f to Color(0x00FFFFFF),
+        0.00f to Color(0xFFFFFFFF).copy(alpha = if (dark) 0.05f else 0.125f),
+        0.25f to Color(0xFFFFFFFF).copy(alpha = if (dark) 0.025f else 0.070f),
+        0.60f to Color.Transparent,
+        1.00f to Color.Transparent,
     )
 
     Box(

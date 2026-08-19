@@ -49,6 +49,7 @@ import com.example.smartcalculator.calc.CalcMode
 import com.example.smartcalculator.calc.HistoryItem
 import com.example.smartcalculator.calc.displayName
 import com.example.smartcalculator.ui.theme.ThemeMode
+import com.example.smartcalculator.ui.theme.Text200
 
 /**
  * HTML `cubic-bezier(0.16, 1, 0.3, 1)` 的精确等效。
@@ -214,13 +215,14 @@ fun ModeDrawer(
  */
 @Composable
 private fun SectionLabel(text: String) {
+    val dark = isDarkTheme()
     Text(
         text = text,
         style = MaterialTheme.typography.labelSmall.copy(
             fontWeight = FontWeight.SemiBold,
             letterSpacing = androidx.compose.ui.text.intl.Locale.current.let { 0.08.sp },
         ),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = if (dark) Text200 else MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(
             start = 12.dp,
             end = 12.dp,
@@ -398,6 +400,7 @@ private fun ThemeModeSelector(
     current: ThemeMode,
     onPick: (ThemeMode) -> Unit,
 ) {
+    val dark = isDarkTheme()
     val options = listOf(
         ThemeMode.Light to "浅色",
         ThemeMode.Dark to "深色",
@@ -409,7 +412,7 @@ private fun ThemeModeSelector(
             .padding(horizontal = 8.dp, vertical = 4.dp)
             .clip(RoundedCornerShape(14.4.dp))
             .background(
-                if (isDarkTheme()) Color(0xFFFFFFFF).copy(alpha = 0.08f)
+                if (dark) Color(0xFFFFFFFF).copy(alpha = 0.06f)
                 else Color(0xFF000000).copy(alpha = 0.05f),
             ),
     ) {
@@ -430,7 +433,7 @@ private fun ThemeModeSelector(
                     .clip(RoundedCornerShape(11.2.dp))
                     .background(
                         when {
-                            selected && isDarkTheme() -> Color(0xFFFFFFFF).copy(alpha = 0.18f)
+                            selected && dark -> Color(0xFFFFFFFF).copy(alpha = 0.15f)
                             selected -> Color(0xFF000000).copy(alpha = 0.08f)
                             else -> Color.Transparent
                         },
@@ -448,8 +451,11 @@ private fun ThemeModeSelector(
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                     ),
-                    color = if (selected) MaterialTheme.colorScheme.onBackground
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = when {
+                        selected -> MaterialTheme.colorScheme.onBackground
+                        dark -> Text200
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                 )
             }
         }
