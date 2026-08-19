@@ -9,7 +9,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -28,20 +30,28 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -50,6 +60,8 @@ import com.example.smartcalculator.calc.HistoryItem
 import com.example.smartcalculator.calc.displayName
 import com.example.smartcalculator.ui.theme.ThemeMode
 import com.example.smartcalculator.ui.theme.Text200
+import com.example.smartcalculator.ui.theme.ThemeColorPresets
+import com.example.smartcalculator.ui.theme.ThemeColorPreset
 
 /**
  * HTML `cubic-bezier(0.16, 1, 0.3, 1)` 的精确等效。
@@ -214,11 +226,14 @@ fun ModeDrawer(
  *   color: var(--apple-muted-foreground)
  */
 @Composable
-private fun SectionLabel(text: String) {
+private fun SectionLabel(
+    text: String,
+    style: TextStyle? = null,
+) {
     val dark = isDarkTheme()
     Text(
         text = text,
-        style = MaterialTheme.typography.labelSmall.copy(
+        style = style ?: MaterialTheme.typography.labelSmall.copy(
             fontWeight = FontWeight.SemiBold,
             letterSpacing = androidx.compose.ui.text.intl.Locale.current.let { 0.08.sp },
         ),
@@ -329,9 +344,13 @@ fun SettingsDrawer(
     visible: Boolean,
     themeMode: ThemeMode,
     onSetThemeMode: (ThemeMode) -> Unit,
+    themeColor: Color,
+    onSetThemeColor: (Color) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var showCustomColorDialog by rememberSaveable { mutableStateOf(false) }
+
     PopOverContainer(
         visible = visible,
         modifier = modifier,
@@ -381,14 +400,45 @@ fun SettingsDrawer(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
-            SectionLabel(text = "外观")
+            SectionLabel(
+                text = "外观",
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.SemiBold,
+                ),
+            )
 
             // 三选一分段控件（液态玻璃风格）
             ThemeModeSelector(
                 current = themeMode,
                 onPick = onSetThemeMode,
             )
+
+            Spacer(modifier = Modifier.height(20.dp))
+            SectionLabel(
+                text = "主题色",
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.SemiBold,
+                ),
+            )
+
+            // 预设色 + 自定义按钮
+            ThemeColorSelector(
+                current = themeColor,
+                onPick = onSetThemeColor,
+                onCustomClick = { showCustomColorDialog = true },
+            )
         }
+    }
+
+    // 自定义颜色弹窗（液态玻璃风格）
+    if (showCustomColorDialog) {
+        CustomColorDialog(
+            onConfirm = { color ->
+                onSetThemeColor(color)
+                showCustomColorDialog = false
+            },
+            onDismiss = { showCustomColorDialog = false },
+        )
     }
 }
 
@@ -476,4 +526,324 @@ fun ModeIcon(mode: CalcMode) {
 @Composable
 fun AboutIcon() {
     Text("i", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+}
+
+// ============================================================
+//  主题色选择器
+// ============================================================
+
+/**
+ * 主题色选择器：预设色圆点 + "自定义"按钮。
+ */
+@Composable
+private fun ThemeColorSelector(
+    current: Color,
+    onPick: (Color) -> Unit,
+    onCustomClick: () -> Unit,
+) {
+    val dark = isDarkTheme()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        ThemeColorPresets.all.forEach { preset ->
+            val selected = preset.color.toArgb() == current.toArgb()
+            val interaction = remember { MutableInteractionSource() }
+            val pressed by interaction.collectIsPressedAsState()
+            val scale by animateFloatAsState(
+                if (pressed) 0.90f else 1.0f,
+                tween(120),
+                label = "colorScale_${preset.id}",
+            )
+
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .scale(scale)
+                    .clip(CircleShape)
+                    .background(preset.color)
+                    .then(
+                        if (selected) {
+                            Modifier.border(
+                                width = 3.dp,
+                                color = Color.White,
+                                shape = CircleShape,
+                            )
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .then(
+                        if (selected) {
+                            Modifier.border(
+                                width = 1.dp,
+                                color = preset.color,
+                                shape = CircleShape,
+                            )
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .clickable(
+                        interactionSource = interaction,
+                        indication = null,
+                        onClick = { onPick(preset.color) },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (selected) {
+                    Text(
+                        text = "\u2713",  // ✓
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        // 自定义颜色按钮
+        val customInteraction = remember { MutableInteractionSource() }
+        val customPressed by customInteraction.collectIsPressedAsState()
+        val customScale by animateFloatAsState(
+            if (customPressed) 0.97f else 1.0f,
+            tween(120),
+            label = "customColorBtnScale",
+        )
+        val isCustom = ThemeColorPresets.all.none { it.color.toArgb() == current.toArgb() }
+
+        Row(
+            modifier = Modifier
+                .scale(customScale)
+                .clip(RoundedCornerShape(12.dp))
+                .background(
+                    if (isCustom) {
+                        Color.White.copy(alpha = if (dark) 0.15f else 0.08f)
+                    } else {
+                        Color.Transparent
+                    }
+                )
+                .clickable(
+                    interactionSource = customInteraction,
+                    indication = null,
+                    onClick = onCustomClick,
+                )
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(current)
+                    .border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(6.dp)),
+            )
+            Text(
+                text = "自定义",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (dark) Text200 else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+// ============================================================
+//  自定义颜色弹窗（液态玻璃风格）
+// ============================================================
+
+/**
+ * 自定义颜色弹窗：
+ *   - 液态玻璃风格的 PopOver 容器
+ *   - Hex 输入框（#RRGGBB）
+ *   - 实时预览
+ *   - 确认 / 取消按钮
+ *   - 安卓返回键 = 取消
+ */
+@Composable
+private fun CustomColorDialog(
+    onConfirm: (Color) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val dark = isDarkTheme()
+
+    // 输入框文本，默认 # 开头
+    var hexInput by rememberSaveable { mutableStateOf("#") }
+
+    // 尝试解析当前输入
+    val parsedColor: Color? = remember(hexInput) {
+        val clean = hexInput.removePrefix("#").trim()
+        if (clean.length == 6) {
+            runCatching { Color(clean.toLong(16)) }.getOrNull()
+        } else if (clean.length == 8) {
+            runCatching { Color(clean.toLong(16)) }.getOrNull()
+        } else {
+            null
+        }
+    }
+
+    // 背景遮罩
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.25f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss,  // 点击空白 = 取消
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        // 安卓返回键 = 取消
+        BackHandler(enabled = true) { onDismiss() }
+
+        PopOverContainer(
+            visible = true,
+            modifier = Modifier
+                .padding(horizontal = 32.dp)
+                .width(300.dp),
+            cornerRadius = 19.2.dp,
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                // 标题
+                Text(
+                    text = "自定义主题色",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    color = if (dark) Text200 else MaterialTheme.colorScheme.onBackground,
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Hex 输入框
+                Text(
+                    text = "Hex 色码",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (dark) Text200 else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = hexInput,
+                    onValueChange = { value ->
+                        // 只允许 # 和 0-9 A-F a-f
+                        val filtered = value.filter { it == '#' || it.isDigit() || it.lowercaseChar() in 'a'..'f' }
+                        hexInput = if (filtered.isEmpty() || filtered == "#") "#" else filtered.take(7)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    ),
+                    isError = parsedColor == null && hexInput.length > 1,
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // 预览
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = "预览",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (dark) Text200 else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(parsedColor ?: Color.Gray.copy(alpha = 0.3f))
+                            .border(
+                                1.dp,
+                                Color.White.copy(alpha = 0.3f),
+                                RoundedCornerShape(10.dp),
+                            ),
+                    )
+                    if (parsedColor != null) {
+                        Text(
+                            text = "RGB(${
+                                (parsedColor.toArgb() shr 16) and 0xFF
+                            }, ${(parsedColor.toArgb() shr 8) and 0xFF}, ${parsedColor.toArgb() and 0xFF})",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (dark) Text200 else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // 确认 / 取消按钮
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // 取消
+                    val cancelInteraction = remember { MutableInteractionSource() }
+                    val cancelPressed by cancelInteraction.collectIsPressedAsState()
+                    val cancelScale by animateFloatAsState(
+                        if (cancelPressed) 0.97f else 1.0f,
+                        tween(120),
+                        label = "cancelScale",
+                    )
+                    Text(
+                        text = "取消",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (dark) Text200 else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .scale(cancelScale)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(
+                                interactionSource = cancelInteraction,
+                                indication = null,
+                                onClick = onDismiss,
+                            )
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                    )
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    // 确认（仅当输入有效时可用）
+                    val confirmInteraction = remember { MutableInteractionSource() }
+                    val confirmPressed by confirmInteraction.collectIsPressedAsState()
+                    val confirmScale by animateFloatAsState(
+                        if (confirmPressed) 0.97f else 1.0f,
+                        tween(120),
+                        label = "confirmScale",
+                    )
+                    val accentColor = parsedColor ?: ThemeColorPresets.Blue.color.copy(alpha = 0.4f)
+                    Text(
+                        text = "确认",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        color = Color.White,
+                        modifier = Modifier
+                            .scale(confirmScale)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(accentColor)
+                            .clickable(
+                                interactionSource = confirmInteraction,
+                                indication = null,
+                                enabled = parsedColor != null,
+                                onClick = {
+                                    parsedColor?.let { onConfirm(it) }
+                                },
+                            )
+                            .padding(horizontal = 20.dp, vertical = 10.dp),
+                    )
+                }
+            }
+        }
+    }
 }

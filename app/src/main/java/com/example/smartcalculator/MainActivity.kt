@@ -2,6 +2,7 @@ package com.example.smartcalculator
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
@@ -12,6 +13,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,6 +29,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.smartcalculator.calc.CalculatorViewModel
 import com.example.smartcalculator.ui.CalculatorScreen
 import com.example.smartcalculator.ui.theme.SmartCalculatorTheme
+import com.example.smartcalculator.ui.theme.LocalThemeColor
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -39,47 +42,58 @@ class MainActivity : ComponentActivity() {
             val state by viewModel.uiState.collectAsStateWithLifecycle()
 
             SmartCalculatorTheme(themeMode = state.themeMode) {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background,
-                ) {
-                    var menuOpen by remember { mutableStateOf(false) }
-                    var historyOpen by remember { mutableStateOf(false) }
-                    var settingsOpen by remember { mutableStateOf(false) }
-                    var aboutOpen by remember { mutableStateOf(false) }
+                // 主题色 CompositionLocal —— 全局变量化提供
+                CompositionLocalProvider(LocalThemeColor provides state.themeColor) {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background,
+                    ) {
+                        var menuOpen by remember { mutableStateOf(false) }
+                        var historyOpen by remember { mutableStateOf(false) }
+                        var settingsOpen by remember { mutableStateOf(false) }
+                        var aboutOpen by remember { mutableStateOf(false) }
 
-                    val closeDrawers = {
-                        menuOpen = false
-                        historyOpen = false
-                        settingsOpen = false
-                    }
+                        val closeDrawers = {
+                            menuOpen = false
+                            historyOpen = false
+                            settingsOpen = false
+                        }
 
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        CalculatorScreen(
-                            viewModel = viewModel,
-                            onMenuClick = {
-                                closeDrawers()
-                                menuOpen = true
-                            },
-                            onHistoryClick = {
-                                closeDrawers()
-                                historyOpen = true
-                            },
-                            onSettingsClick = {
-                                closeDrawers()
-                                settingsOpen = true
-                            },
-                            onAbout = {
-                                aboutOpen = true
-                            },
-                            isMenuOpen = menuOpen,
-                            isHistoryOpen = historyOpen,
-                            isSettingsOpen = settingsOpen,
-                            onCloseDrawers = { closeDrawers() },
-                        )
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            // 系统返回键：优先关闭"关于"对话框 → 再关闭弹窗 → 最后才退出 App
+                            BackHandler(enabled = aboutOpen || menuOpen || historyOpen || settingsOpen) {
+                                when {
+                                    aboutOpen -> aboutOpen = false
+                                    menuOpen || historyOpen || settingsOpen -> closeDrawers()
+                                }
+                            }
 
-                        if (aboutOpen) {
-                            AboutDialog(onDismiss = { aboutOpen = false })
+                            CalculatorScreen(
+                                viewModel = viewModel,
+                                onMenuClick = {
+                                    closeDrawers()
+                                    menuOpen = true
+                                },
+                                onHistoryClick = {
+                                    closeDrawers()
+                                    historyOpen = true
+                                },
+                                onSettingsClick = {
+                                    closeDrawers()
+                                    settingsOpen = true
+                                },
+                                onAbout = {
+                                    aboutOpen = true
+                                },
+                                isMenuOpen = menuOpen,
+                                isHistoryOpen = historyOpen,
+                                isSettingsOpen = settingsOpen,
+                                onCloseDrawers = { closeDrawers() },
+                            )
+
+                            if (aboutOpen) {
+                                AboutDialog(onDismiss = { aboutOpen = false })
+                            }
                         }
                     }
                 }

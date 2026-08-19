@@ -84,6 +84,7 @@ fun CalculatorScreen(
                     onClearHistory = viewModel::clearHistory,
                     onCloseSettings = onCloseDrawers,
                     onSetThemeMode = viewModel::setThemeMode,
+                    onSetThemeColor = viewModel::setThemeColor,
                 )
             }
 
@@ -124,6 +125,7 @@ private data class SharedCallbacks(
     val onClearHistory: () -> Unit,
     val onCloseSettings: () -> Unit,
     val onSetThemeMode: (ThemeMode) -> Unit,
+    val onSetThemeColor: (Color) -> Unit,
 )
 
 @Composable
@@ -314,6 +316,8 @@ private fun androidx.compose.foundation.layout.BoxScope.DrawersLayer(
         visible = isSettingsOpen,
         themeMode = state.themeMode,
         onSetThemeMode = cb.onSetThemeMode,
+        themeColor = state.themeColor,
+        onSetThemeColor = cb.onSetThemeColor,
         onClose = cb.onCloseSettings,
         modifier = Modifier
             .fillMaxSize()

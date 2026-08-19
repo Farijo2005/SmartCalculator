@@ -4,7 +4,11 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.compose.ui.graphics.Color
 import com.example.smartcalculator.ui.theme.ThemeMode
+import com.example.smartcalculator.ui.theme.ThemeColorPresets
+import com.example.smartcalculator.ui.theme.parseThemeColor
+import com.example.smartcalculator.ui.theme.serializeThemeColor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,6 +37,12 @@ class CalculatorViewModel(application: Application) : AndroidViewModel(applicati
         persist()
     }
 
+    // ===== 主题色 =====
+    fun setThemeColor(color: Color) {
+        _uiState.update { it.copy(themeColor = color) }
+        persist()
+    }
+
     // ===== 历史记录 =====
     fun clearHistory() {
         _uiState.update { it.copy(history = emptyList()) }
@@ -58,6 +68,7 @@ class CalculatorViewModel(application: Application) : AndroidViewModel(applicati
             putString("mode", s.mode.name)
             putString("menu_order", s.menuOrder.joinToString(",") { it.name })
             putString("theme_mode", s.themeMode.name)
+            putString("theme_color", serializeThemeColor(s.themeColor))
             apply()
         }
     }
@@ -74,11 +85,13 @@ class CalculatorViewModel(application: Application) : AndroidViewModel(applicati
         val themeMode = prefs.getString("theme_mode", null)
             ?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
             ?: ThemeMode.Auto
+        val themeColor = parseThemeColor(prefs.getString("theme_color", null))
         return CalculatorUiState(
             mode = mode,
             menuOrder = menuOrder,
             history = emptyList(),
             themeMode = themeMode,
+            themeColor = themeColor,
         )
     }
 
@@ -117,7 +130,7 @@ data class HistoryItem(
 )
 
 /**
- * UI 状态（精简版：仅模式 / 历史 / 菜单顺序）
+ * UI 状态（精简版：仅模式 / 历史 / 菜单顺序 / 主题）
  */
 data class CalculatorUiState(
     val mode: CalcMode = CalcMode.Standard,
@@ -129,4 +142,5 @@ data class CalculatorUiState(
         CalcMode.Statistics,
     ),
     val themeMode: ThemeMode = ThemeMode.Auto,
+    val themeColor: Color = ThemeColorPresets.Blue.color,
 )
