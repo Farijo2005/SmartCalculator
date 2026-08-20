@@ -46,7 +46,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.TextStyle
@@ -62,6 +65,7 @@ import com.example.smartcalculator.ui.theme.ThemeMode
 import com.example.smartcalculator.ui.theme.Text200
 import com.example.smartcalculator.ui.theme.ThemeColorPresets
 import com.example.smartcalculator.ui.theme.ThemeColorPreset
+import com.example.smartcalculator.ui.components.AddIcon
 
 /**
  * HTML `cubic-bezier(0.16, 1, 0.3, 1)` 的精确等效。
@@ -608,47 +612,36 @@ private fun ThemeColorSelector(
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // 自定义颜色按钮
+        // 自定义颜色按钮 —— 圆形 + 号图标
         val customInteraction = remember { MutableInteractionSource() }
         val customPressed by customInteraction.collectIsPressedAsState()
         val customScale by animateFloatAsState(
-            if (customPressed) 0.97f else 1.0f,
+            if (customPressed) 0.90f else 1.0f,
             tween(120),
             label = "customColorBtnScale",
         )
-        val isCustom = ThemeColorPresets.all.none { it.color.toArgb() == current.toArgb() }
 
-        Row(
+        Box(
             modifier = Modifier
+                .size(32.dp)
                 .scale(customScale)
-                .clip(RoundedCornerShape(12.dp))
-                .background(
-                    if (isCustom) {
-                        Color.White.copy(alpha = if (dark) 0.15f else 0.08f)
-                    } else {
-                        Color.Transparent
-                    }
+                .clip(CircleShape)
+                .background(Color.Transparent)
+                .border(
+                    width = 1.5.dp,
+                    color = if (dark) Color.White.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.30f),
+                    shape = CircleShape,
                 )
                 .clickable(
                     interactionSource = customInteraction,
                     indication = null,
                     onClick = onCustomClick,
-                )
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ),
+            contentAlignment = Alignment.Center,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(20.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(current)
-                    .border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(6.dp)),
-            )
-            Text(
-                text = "自定义",
-                style = MaterialTheme.typography.bodySmall,
-                color = if (dark) Text200 else MaterialTheme.colorScheme.onSurfaceVariant,
+            AddIcon(
+                size = 18.dp,
+                tint = if (dark) Text200 else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -660,10 +653,10 @@ private fun ThemeColorSelector(
 
 /**
  * 自定义颜色弹窗：
- *   - 液态玻璃风格的 PopOver 容器
+ *   - 苹果风格高斯模糊 + 液态玻璃容器
  *   - Hex 输入框（#RRGGBB）
  *   - 实时预览
- *   - 确认 / 取消按钮
+ *   - 液态玻璃风格的确认 / 取消按钮
  *   - 安卓返回键 = 取消
  */
 @Composable
@@ -673,14 +666,12 @@ private fun CustomColorDialog(
 ) {
     val dark = isDarkTheme()
 
-    // 输入框文本，默认 # 开头
     var hexInput by rememberSaveable { mutableStateOf("#") }
 
-    // 尝试解析当前输入
     val parsedColor: Color? = remember(hexInput) {
         val clean = hexInput.removePrefix("#").trim()
         if (clean.length == 6) {
-            runCatching { Color(clean.toLong(16)) }.getOrNull()
+            runCatching { Color(0xFF000000L or clean.toLong(16)) }.getOrNull()
         } else if (clean.length == 8) {
             runCatching { Color(clean.toLong(16)) }.getOrNull()
         } else {
@@ -688,19 +679,17 @@ private fun CustomColorDialog(
         }
     }
 
-    // 背景遮罩
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.25f))
+            .background(Color.Black.copy(alpha = 0.40f))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = onDismiss,  // 点击空白 = 取消
+                onClick = onDismiss,
             ),
         contentAlignment = Alignment.Center,
     ) {
-        // 安卓返回键 = 取消
         BackHandler(enabled = true) { onDismiss() }
 
         PopOverContainer(
@@ -710,140 +699,198 @@ private fun CustomColorDialog(
                 .width(300.dp),
             cornerRadius = 19.2.dp,
         ) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                // 标题
-                Text(
-                    text = "自定义主题色",
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.SemiBold,
-                    ),
-                    color = if (dark) Text200 else MaterialTheme.colorScheme.onBackground,
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Hex 输入框
-                Text(
-                    text = "Hex 色码",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (dark) Text200 else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = hexInput,
-                    onValueChange = { value ->
-                        // 只允许 # 和 0-9 A-F a-f
-                        val filtered = value.filter { it == '#' || it.isDigit() || it.lowercaseChar() in 'a'..'f' }
-                        hexInput = if (filtered.isEmpty() || filtered == "#") "#" else filtered.take(7)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                    ),
-                    isError = parsedColor == null && hexInput.length > 1,
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // 预览
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
+            val dialogBg = if (dark) Color(0xFF38414D).copy(alpha = 0.82f) else Color(0xFFFFFFFF).copy(alpha = 0.88f)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(dialogBg),
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
                     Text(
-                        text = "预览",
+                        text = "自定义主题色",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        color = if (dark) Text200 else MaterialTheme.colorScheme.onBackground,
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "Hex 色码",
                         style = MaterialTheme.typography.labelSmall,
                         color = if (dark) Text200 else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Box(
+                    Spacer(modifier = Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = hexInput,
+                        onValueChange = { value ->
+                            val filtered = value.filter { it == '#' || it.isDigit() || it.lowercaseChar() in 'a'..'f' }
+                            hexInput = if (filtered.isEmpty() || filtered == "#") "#" else filtered.take(7)
+                        },
                         modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(parsedColor ?: Color.Gray.copy(alpha = 0.3f))
-                            .border(
-                                1.dp,
-                                Color.White.copy(alpha = 0.3f),
-                                RoundedCornerShape(10.dp),
-                            ),
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.4.dp)),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            color = if (dark) Text200 else MaterialTheme.colorScheme.onSurface,
+                        ),
+                        isError = parsedColor == null && hexInput.length > 1,
+                        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = if (dark) Color(0xFF444E59) else Color(0xFFF7F7FA),
+                            unfocusedContainerColor = if (dark) Color(0xFF3E4752) else Color(0xFFF2F2F7),
+                            errorContainerColor = if (dark) Color(0xFF4A3838) else Color(0xFFFFECEA),
+                            focusedBorderColor = if (dark) Color.White.copy(alpha = 0.50f) else MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = if (dark) Color.White.copy(alpha = 0.25f) else Color(0xFFD1D1D6),
+                            errorBorderColor = Color(0xFFFF453A),
+                            cursorColor = if (dark) Color(0xFF66ABFF) else MaterialTheme.colorScheme.primary,
+                        ),
                     )
-                    if (parsedColor != null) {
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
                         Text(
-                            text = "RGB(${
-                                (parsedColor.toArgb() shr 16) and 0xFF
-                            }, ${(parsedColor.toArgb() shr 8) and 0xFF}, ${parsedColor.toArgb() and 0xFF})",
-                            style = MaterialTheme.typography.bodySmall,
+                            text = "预览",
+                            style = MaterialTheme.typography.labelSmall,
                             color = if (dark) Text200 else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(parsedColor ?: Color.Gray.copy(alpha = 0.3f))
+                                .border(
+                                    1.dp,
+                                    Color.White.copy(alpha = 0.3f),
+                                    RoundedCornerShape(10.dp),
+                                ),
+                        )
+                        if (parsedColor != null) {
+                            Text(
+                                text = "RGB(${
+                                    (parsedColor.toArgb() shr 16) and 0xFF
+                                }, ${(parsedColor.toArgb() shr 8) and 0xFF}, ${parsedColor.toArgb() and 0xFF})",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (dark) Text200 else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        GlassActionButton(
+                            text = "取消",
+                            enabled = true,
+                            isAccent = false,
+                            onClick = onDismiss,
+                        )
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        GlassActionButton(
+                            text = "确认",
+                            enabled = parsedColor != null,
+                            isAccent = true,
+                            accentColor = parsedColor ?: ThemeColorPresets.Blue.color,
+                            onClick = { parsedColor?.let { onConfirm(it) } },
                         )
                     }
                 }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // 确认 / 取消按钮
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    // 取消
-                    val cancelInteraction = remember { MutableInteractionSource() }
-                    val cancelPressed by cancelInteraction.collectIsPressedAsState()
-                    val cancelScale by animateFloatAsState(
-                        if (cancelPressed) 0.97f else 1.0f,
-                        tween(120),
-                        label = "cancelScale",
-                    )
-                    Text(
-                        text = "取消",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (dark) Text200 else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .scale(cancelScale)
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable(
-                                interactionSource = cancelInteraction,
-                                indication = null,
-                                onClick = onDismiss,
-                            )
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                    )
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    // 确认（仅当输入有效时可用）
-                    val confirmInteraction = remember { MutableInteractionSource() }
-                    val confirmPressed by confirmInteraction.collectIsPressedAsState()
-                    val confirmScale by animateFloatAsState(
-                        if (confirmPressed) 0.97f else 1.0f,
-                        tween(120),
-                        label = "confirmScale",
-                    )
-                    val accentColor = parsedColor ?: ThemeColorPresets.Blue.color.copy(alpha = 0.4f)
-                    Text(
-                        text = "确认",
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontWeight = FontWeight.SemiBold,
-                        ),
-                        color = Color.White,
-                        modifier = Modifier
-                            .scale(confirmScale)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(accentColor)
-                            .clickable(
-                                interactionSource = confirmInteraction,
-                                indication = null,
-                                enabled = parsedColor != null,
-                                onClick = {
-                                    parsedColor?.let { onConfirm(it) }
-                                },
-                            )
-                            .padding(horizontal = 20.dp, vertical = 10.dp),
-                    )
-                }
             }
         }
+    }
+}
+
+/**
+ * 液态玻璃风格操作按钮 —— 用于弹窗的确认/取消按钮。
+ * 对齐 HTML .liquid-glass 结构，支持按压缩放反馈。
+ */
+@Composable
+private fun GlassActionButton(
+    text: String,
+    enabled: Boolean,
+    isAccent: Boolean,
+    accentColor: Color = Color.Blue,
+    onClick: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        if (pressed) 0.94f else 1.0f,
+        tween(durationMillis = 150),
+        label = "actionBtnScale",
+    )
+    val dark = isDarkTheme()
+
+    val bgAlpha = when {
+        !enabled -> if (dark) 0.18f else 0.25f
+        pressed -> if (dark) 0.35f else 0.52f
+        else -> if (dark) 0.22f else 0.35f
+    }
+    val bg = if (isAccent && enabled) accentColor.copy(alpha = if (pressed) 0.85f else 0.72f)
+             else Color(0xFFFFFFFF).copy(alpha = bgAlpha)
+
+    val borderAlpha = if (isAccent && enabled) 0.55f else if (dark) 0.22f else 0.50f
+    val borderColor = if (isAccent && enabled) Color.White.copy(alpha = borderAlpha)
+                      else Color(0xFFFFFFFF).copy(alpha = borderAlpha)
+
+    val textColor = when {
+        !enabled -> if (dark) Text200.copy(alpha = 0.5f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+        isAccent -> Color.White
+        else -> if (dark) Text200 else MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    val elevation = if (pressed) 2.dp else 4.dp
+
+    Box(
+        modifier = Modifier
+            .scale(scale)
+            .shadow(
+                elevation = elevation,
+                shape = RoundedCornerShape(12.dp),
+                clip = false,
+                ambientColor = Color.Black.copy(alpha = if (dark) 0.40f else 0.08f),
+                spotColor = Color.Black.copy(alpha = if (dark) 0.30f else 0.05f),
+            )
+            .clip(RoundedCornerShape(12.dp))
+            .background(bg)
+            .border(width = 1.dp, color = borderColor, shape = RoundedCornerShape(12.dp))
+            .drawBehind {
+                val inset = 8f
+                drawLine(
+                    color = Color.White.copy(alpha = if (dark) 0.18f else 0.55f),
+                    start = Offset(inset, 0.5f),
+                    end = Offset(size.width - inset, 0.5f),
+                    strokeWidth = 1f,
+                )
+            }
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                enabled = enabled,
+                onClick = onClick,
+            )
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontWeight = if (isAccent) FontWeight.SemiBold else FontWeight.Medium,
+            ),
+            color = textColor,
+        )
     }
 }

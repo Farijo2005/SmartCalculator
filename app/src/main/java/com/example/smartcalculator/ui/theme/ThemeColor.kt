@@ -71,8 +71,11 @@ object ThemeColorPresets {
 fun parseThemeColor(stored: String?): Color {
     if (stored == null) return ThemeColorPresets.Blue.color
     if (stored.startsWith("#")) {
-        return runCatching { Color(stored.removePrefix("#").toLong(16)) }
-            .getOrDefault(ThemeColorPresets.Blue.color)
+        val clean = stored.removePrefix("#")
+        return runCatching {
+            if (clean.length == 6) Color(0xFF000000L or clean.toLong(16))
+            else Color(clean.toLong(16))
+        }.getOrDefault(ThemeColorPresets.Blue.color)
     }
     return ThemeColorPresets.findById(stored)?.color ?: ThemeColorPresets.Blue.color
 }

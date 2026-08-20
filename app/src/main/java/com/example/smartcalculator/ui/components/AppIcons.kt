@@ -10,6 +10,7 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material3.Icon
@@ -59,6 +60,11 @@ fun ArrowUpIcon(modifier: Modifier = Modifier, size: Dp = 14.dp, tint: Color = L
 @Composable
 fun ArrowDownIcon(modifier: Modifier = Modifier, size: Dp = 14.dp, tint: Color = LocalContentColor.current) {
     VectorIcon(Icons.Rounded.ArrowDownward, modifier, size, tint)
+}
+
+@Composable
+fun AddIcon(modifier: Modifier = Modifier, size: Dp = 18.dp, tint: Color = LocalContentColor.current) {
+    VectorIcon(Icons.Rounded.Add, modifier, size, tint)
 }
 
 @Composable

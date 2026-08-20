@@ -29,6 +29,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.smartcalculator.calc.CalculatorViewModel
 import com.example.smartcalculator.ui.CalculatorScreen
 import com.example.smartcalculator.ui.theme.SmartCalculatorTheme
+import com.example.smartcalculator.ui.theme.AccentOverride
 import com.example.smartcalculator.ui.theme.LocalThemeColor
 
 class MainActivity : ComponentActivity() {
@@ -41,7 +42,13 @@ class MainActivity : ComponentActivity() {
             )
             val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-            SmartCalculatorTheme(themeMode = state.themeMode) {
+            SmartCalculatorTheme(
+                themeMode = state.themeMode,
+                accentOverride = AccentOverride(
+                    primary = state.themeColor,
+                    ring = state.themeColor,
+                ),
+            ) {
                 // 主题色 CompositionLocal —— 全局变量化提供
                 CompositionLocalProvider(LocalThemeColor provides state.themeColor) {
                     Surface(
