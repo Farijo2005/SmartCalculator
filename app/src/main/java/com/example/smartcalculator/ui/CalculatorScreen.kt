@@ -75,7 +75,7 @@ fun CalculatorScreen(
             val isTablet = maxWidth > 720.dp
             val wide = isLandscape || isTablet
 
-            val cb = remember(onCloseDrawers) {
+            val cb = remember(onCloseDrawers, state.mode) {
                 SharedCallbacks(
                     onPickMode = { mode: CalcMode ->
                         viewModel.setMode(mode)
@@ -86,7 +86,9 @@ fun CalculatorScreen(
                     onCloseSettings = onCloseDrawers,
                     onSetThemeMode = viewModel::setThemeMode,
                     onSetThemeColor = viewModel::setThemeColor,
-                    onModuleIntent = { /* TODO: ViewModel 路由到对应模块的 reducer */ },
+                    onModuleIntent = { intent ->
+                        viewModel.onModuleIntent(state.mode, intent)
+                    },
                 )
             }
 
