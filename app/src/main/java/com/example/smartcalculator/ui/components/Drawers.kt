@@ -552,7 +552,7 @@ private fun ThemeColorSelector(
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
     ) {
         ThemeColorPresets.all.forEach { preset ->
             val selected = preset.color.toArgb() == current.toArgb()
@@ -609,8 +609,6 @@ private fun ThemeColorSelector(
                 }
             }
         }
-
-        Spacer(modifier = Modifier.weight(1f))
 
         // 自定义颜色按钮 —— 圆形 + 号图标
         val customInteraction = remember { MutableInteractionSource() }
