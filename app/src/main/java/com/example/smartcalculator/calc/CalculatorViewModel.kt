@@ -80,8 +80,15 @@ class CalculatorViewModel(application: Application) : AndroidViewModel(applicati
         val menuOrder = prefs.getString("menu_order", null)
             ?.split(",")
             ?.mapNotNull { runCatching { CalcMode.valueOf(it) }.getOrNull() }
+            // 旧数据可能缺少新增模块，过滤无效项后用默认顺序补全
+            ?.let { saved ->
+                val full = CalcMode.defaultOrder
+                val merged = saved.toMutableList()
+                full.forEach { mode -> if (merged.none { it == mode }) merged.add(mode) }
+                merged.filter { it in CalcMode.defaultOrder }
+            }
             ?.takeIf { it.isNotEmpty() }
-            ?: listOf(CalcMode.Standard, CalcMode.Scientific, CalcMode.Programmer, CalcMode.Statistics)
+            ?: CalcMode.defaultOrder
         val themeMode = prefs.getString("theme_mode", null)
             ?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
             ?: ThemeMode.Auto
@@ -108,17 +115,49 @@ class CalculatorViewModel(application: Application) : AndroidViewModel(applicati
 }
 
 /**
- * 计算器模式
+ * 计算器模式。
+ *
+ * 每个模式视为一个独立模块（独立 UI / 独立逻辑），但共用同一份历史记录，
+ * 模块之间可以无缝切换 / 整合。后续如需多人协同，可在 ViewModel 层接入
+ * 远端同步通道，UI 层无需改动。
+ *
+ * - [Standard]      标准
+ * - [Scientific]     科学
+ * - [Programmer]     程序员
+ * - [MatlabSet]      MATLAB 集（带二级子菜单，子模块逐步接入）
+ * - [Statistics]     统计
+ * - [UnitConversion] 单位换算
+ * - [EquationSolver] 解方程
+ * - [Plotting]       绘图
  */
-enum class CalcMode { Standard, Scientific, Programmer, Statistics }
+enum class CalcMode {
+    Standard, Scientific, Programmer, MatlabSet,
+    Statistics, UnitConversion, EquationSolver, Plotting;
+
+    /** 默认菜单顺序，[ModeDrawer] 与持久化层共用。 */
+    companion object {
+        val defaultOrder: List<CalcMode> = listOf(
+            Standard, Scientific, Programmer, MatlabSet,
+            Statistics, UnitConversion, EquationSolver, Plotting,
+        )
+    }
+}
 
 /** 模式 → 中文显示名（菜单抽屉 & Header 共用） */
 fun CalcMode.displayName(): String = when (this) {
-    CalcMode.Standard   -> "标准"
-    CalcMode.Scientific -> "科学"
-    CalcMode.Programmer -> "程序员"
-    CalcMode.Statistics -> "统计"
+    CalcMode.Standard       -> "标准"
+    CalcMode.Scientific     -> "科学"
+    CalcMode.Programmer     -> "程序员"
+    CalcMode.MatlabSet      -> "MATLAB 集"
+    CalcMode.Statistics     -> "统计"
+    CalcMode.UnitConversion -> "单位换算"
+    CalcMode.EquationSolver -> "解方程"
+    CalcMode.Plotting       -> "绘图"
 }
+
+/** 该模式是否带二级子菜单。目前只有 MATLAB 集。 */
+val CalcMode.hasSubMenu: Boolean
+    get() = this == CalcMode.MatlabSet
 
 /**
  * 历史记录项（暂时只用展示，后续计算功能完善后再写入）
@@ -135,12 +174,7 @@ data class HistoryItem(
 data class CalculatorUiState(
     val mode: CalcMode = CalcMode.Standard,
     val history: List<HistoryItem> = emptyList(),
-    val menuOrder: List<CalcMode> = listOf(
-        CalcMode.Standard,
-        CalcMode.Scientific,
-        CalcMode.Programmer,
-        CalcMode.Statistics,
-    ),
+    val menuOrder: List<CalcMode> = CalcMode.defaultOrder,
     val themeMode: ThemeMode = ThemeMode.Auto,
     val themeColor: Color = ThemeColorPresets.Blue.color,
 )

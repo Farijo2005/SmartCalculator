@@ -5,10 +5,12 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -47,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -61,11 +64,13 @@ import androidx.compose.ui.unit.sp
 import com.example.smartcalculator.calc.CalcMode
 import com.example.smartcalculator.calc.HistoryItem
 import com.example.smartcalculator.calc.displayName
+import com.example.smartcalculator.calc.hasSubMenu
 import com.example.smartcalculator.ui.theme.ThemeMode
 import com.example.smartcalculator.ui.theme.Text200
 import com.example.smartcalculator.ui.theme.ThemeColorPresets
 import com.example.smartcalculator.ui.theme.ThemeColorPreset
 import com.example.smartcalculator.ui.components.AddIcon
+import com.example.smartcalculator.ui.components.ChevronRightIcon
 
 /**
  * HTML `cubic-bezier(0.16, 1, 0.3, 1)` 的精确等效。
@@ -164,6 +169,9 @@ fun ModeDrawer(
     onAbout: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // MATLAB 集二级子菜单展开状态（独立记忆，不影响其他模块）
+    var matlabExpanded by rememberSaveable { mutableStateOf(false) }
+
     PopOverContainer(
         visible = visible,
         modifier = modifier.width(224.dp),   // w-56 = 14rem = 224dp
@@ -172,10 +180,26 @@ fun ModeDrawer(
         Column(modifier = Modifier.padding(8.dp)) {  // p-2 = 8dp
             SectionLabel(text = "模式")
             menuOrder.forEach { mode ->
+                // —— 普通模块：点击切换模式 ——
+                // —— MATLAB 集：点击仅展开/收起二级子菜单（互不干扰） ——
+                val isSubMenuMode = mode.hasSubMenu
+                val selected = !isSubMenuMode && mode == currentMode
+                val chevronRotation by animateFloatAsState(
+                    if (matlabExpanded && isSubMenuMode) 90f else 0f,
+                    tween(durationMillis = 220, easing = PopOverEasing),
+                    label = "matlabChevron",
+                )
+
                 GlassItemButton(
                     modifier = Modifier.fillMaxWidth(),
-                    selected = mode == currentMode,
-                    onClick = { onPickMode(mode) },
+                    selected = selected,
+                    onClick = {
+                        if (isSubMenuMode) {
+                            matlabExpanded = !matlabExpanded
+                        } else {
+                            onPickMode(mode)
+                        }
+                    },
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -190,7 +214,37 @@ fun ModeDrawer(
                             text = mode.displayName(),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f),
                         )
+                        if (isSubMenuMode) {
+                            // 二级子菜单指示箭头（旋转 90° 表示展开）
+                            Box(
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .rotate(chevronRotation),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                ChevronRightIcon(
+                                    size = 18.dp,
+                                    tint = LocalContentColor.current.copy(alpha = 0.60f),
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // —— MATLAB 集二级子菜单（内容占位，后续逐步接入） ——
+                if (isSubMenuMode) {
+                    AnimatedVisibility(
+                        visible = matlabExpanded,
+                        enter = expandVertically(
+                            animationSpec = tween(220, easing = PopOverEasing),
+                        ) + fadeIn(tween(180)),
+                        exit = shrinkVertically(
+                            animationSpec = tween(180, easing = PopOverEasing),
+                        ) + fadeOut(tween(140)),
+                    ) {
+                        MatlabSetSubMenu()
                     }
                 }
             }
@@ -218,6 +272,52 @@ fun ModeDrawer(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * MATLAB 集二级子菜单。
+ *
+ * - 设计原则：每个子模块视为独立程序，但与所有其他模块共用同一份历史记录
+ *   （由 [CalculatorViewModel] 单一来源维护），切换不丢失上下文。
+ * - 多人协同：子模块之间状态隔离，后续可在 ViewModel 层接入远端同步通道，
+ *   UI 层无需改动即可支持多人同时在线编程。
+ * - 内容占位：当前仅展示容器结构，具体子模块按需逐步接入。
+ */
+@Composable
+private fun MatlabSetSubMenu() {
+    val dark = isDarkTheme()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 26.dp, end = 4.dp, top = 2.dp, bottom = 4.dp),
+    ) {
+        // 子模块逐步接入时的占位提示
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp, horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(
+                modifier = Modifier.size(6.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "·",
+                    color = if (dark) Text200.copy(alpha = 0.50f)
+                           else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.50f),
+                    fontSize = 12.sp,
+                )
+            }
+            Text(
+                text = "子模块逐步接入中",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (dark) Text200.copy(alpha = 0.55f)
+                       else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.60f),
+            )
         }
     }
 }
@@ -520,10 +620,14 @@ private fun ThemeModeSelector(
 @Composable
 fun ModeIcon(mode: CalcMode) {
     when (mode) {
-        CalcMode.Standard   -> Text("=", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-        CalcMode.Scientific -> Text("ƒ", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-        CalcMode.Programmer -> Text("<>", fontWeight = FontWeight.Bold,   fontSize = 12.sp)
-        CalcMode.Statistics -> Text("Σ", fontWeight = FontWeight.Bold,   fontSize = 16.sp)
+        CalcMode.Standard       -> Text("=",  fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+        CalcMode.Scientific     -> Text("ƒ",  fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+        CalcMode.Programmer     -> Text("<>", fontWeight = FontWeight.Bold,    fontSize = 12.sp)
+        CalcMode.MatlabSet      -> Text("M",  fontWeight = FontWeight.Bold,    fontSize = 14.sp)
+        CalcMode.Statistics     -> Text("Σ",  fontWeight = FontWeight.Bold,    fontSize = 16.sp)
+        CalcMode.UnitConversion -> Text("⇄",  fontWeight = FontWeight.Bold,    fontSize = 16.sp)
+        CalcMode.EquationSolver -> Text("x",  fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+        CalcMode.Plotting       -> Text("∿",  fontWeight = FontWeight.Bold,    fontSize = 16.sp)
     }
 }
 
