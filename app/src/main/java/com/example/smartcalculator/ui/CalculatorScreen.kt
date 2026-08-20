@@ -10,14 +10,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -27,24 +24,28 @@ import com.example.smartcalculator.calc.CalculatorViewModel
 import com.example.smartcalculator.calc.HistoryItem
 import com.example.smartcalculator.calc.displayName
 import com.example.smartcalculator.ui.components.DrawerBackdrop
-import com.example.smartcalculator.ui.components.GlassCard
 import com.example.smartcalculator.ui.components.HeaderBar
 import com.example.smartcalculator.ui.components.HistoryDrawer
 import com.example.smartcalculator.ui.components.ModeDrawer
 import com.example.smartcalculator.ui.components.SettingsDrawer
 import com.example.smartcalculator.ui.components.isDarkTheme
-import com.example.smartcalculator.ui.theme.BackgroundAppleDark
-import com.example.smartcalculator.ui.theme.Background100
+import com.example.smartcalculator.ui.modules.ModuleIntent
+import com.example.smartcalculator.ui.modules.ModuleRouter
 import com.example.smartcalculator.ui.theme.Background200
-import com.example.smartcalculator.ui.theme.PanelAppleDark
+import com.example.smartcalculator.ui.theme.BackgroundAppleDark
 import com.example.smartcalculator.ui.theme.ThemeMode
 
 /**
- * 主屏幕（阶段一）：只保留框架。
+ * 主屏幕（阶段二）：模块化框架。
+ *
  * - HeaderBar（三个按钮）
- * - 显示区占位卡片
- * - 按键区占位卡片
+ * - 模块内容区（由 [ModuleRouter] 根据 [CalcMode] 路由到独立模块文件）
  * - 三个抽屉：菜单 / 历史 / 设置
+ *
+ * 模块化要点：
+ * - 每个模式有自己的 .kt 文件（如 [com.example.smartcalculator.ui.modules.StandardModule]）
+ * - 共享文件（本文件、[ModuleRouter]）只在新增模块时改一行
+ * - 横竖屏布局统一由 [com.example.smartcalculator.ui.modules.ModuleLayout] 处理
  */
 @Composable
 fun CalculatorScreen(
@@ -85,36 +86,23 @@ fun CalculatorScreen(
                     onCloseSettings = onCloseDrawers,
                     onSetThemeMode = viewModel::setThemeMode,
                     onSetThemeColor = viewModel::setThemeColor,
+                    onModuleIntent = { /* TODO: ViewModel 路由到对应模块的 reducer */ },
                 )
             }
 
-            if (wide) {
-                LandscapeContent(
-                    state = state,
-                    cb = cb,
-                    onMenuClick = onMenuClick,
-                    onHistoryClick = onHistoryClick,
-                    onSettingsClick = onSettingsClick,
-                    onAbout = onAbout,
-                    isMenuOpen = isMenuOpen,
-                    isHistoryOpen = isHistoryOpen,
-                    isSettingsOpen = isSettingsOpen,
-                    onCloseDrawers = onCloseDrawers,
-                )
-            } else {
-                PortraitContent(
-                    state = state,
-                    cb = cb,
-                    onMenuClick = onMenuClick,
-                    onHistoryClick = onHistoryClick,
-                    onSettingsClick = onSettingsClick,
-                    onAbout = onAbout,
-                    isMenuOpen = isMenuOpen,
-                    isHistoryOpen = isHistoryOpen,
-                    isSettingsOpen = isSettingsOpen,
-                    onCloseDrawers = onCloseDrawers,
-                )
-            }
+            CalculatorContent(
+                state = state,
+                isLandscape = wide,
+                cb = cb,
+                onMenuClick = onMenuClick,
+                onHistoryClick = onHistoryClick,
+                onSettingsClick = onSettingsClick,
+                onAbout = onAbout,
+                isMenuOpen = isMenuOpen,
+                isHistoryOpen = isHistoryOpen,
+                isSettingsOpen = isSettingsOpen,
+                onCloseDrawers = onCloseDrawers,
+            )
         }
     }
 }
@@ -126,11 +114,13 @@ private data class SharedCallbacks(
     val onCloseSettings: () -> Unit,
     val onSetThemeMode: (ThemeMode) -> Unit,
     val onSetThemeColor: (Color) -> Unit,
+    val onModuleIntent: (ModuleIntent) -> Unit,
 )
 
 @Composable
-private fun PortraitContent(
+private fun CalculatorContent(
     state: CalculatorUiState,
+    isLandscape: Boolean,
     cb: SharedCallbacks,
     onMenuClick: () -> Unit,
     onHistoryClick: () -> Unit,
@@ -152,73 +142,17 @@ private fun PortraitContent(
             )
             Spacer(modifier = Modifier.height(8.dp))
 
-            // 显示区占位卡片（设计稿上方的圆角卡片）
-            DisplayPlaceholderCard(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // 按键区占位卡片（设计稿下方的圆角卡片区域）
-            KeypadPlaceholderCard(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-
-        DrawersLayer(
-            state = state,
-            cb = cb,
-            onAbout = onAbout,
-            isMenuOpen = isMenuOpen,
-            isHistoryOpen = isHistoryOpen,
-            isSettingsOpen = isSettingsOpen,
-            onCloseDrawers = onCloseDrawers,
-        )
-    }
-}
-
-@Composable
-private fun LandscapeContent(
-    state: CalculatorUiState,
-    cb: SharedCallbacks,
-    onMenuClick: () -> Unit,
-    onHistoryClick: () -> Unit,
-    onSettingsClick: () -> Unit,
-    onAbout: () -> Unit,
-    isMenuOpen: Boolean,
-    isHistoryOpen: Boolean,
-    isSettingsOpen: Boolean,
-    onCloseDrawers: () -> Unit,
-) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            HeaderBar(
-                title = state.mode.displayName(),
-                onMenuClick = onMenuClick,
-                onHistoryClick = onHistoryClick,
-                onSettingsClick = onSettingsClick,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            androidx.compose.foundation.layout.Row(
+            // 模块内容区 —— 路由到当前模式的独立模块文件
+            ModuleRouter(
+                mode = state.mode,
+                moduleStates = state.moduleStates,
+                onIntent = cb.onModuleIntent,
+                isLandscape = isLandscape,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
                     .weight(1f),
-                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp),
-            ) {
-                Box(modifier = Modifier.weight(1f)) {
-                    DisplayPlaceholderCard(modifier = Modifier.fillMaxSize())
-                }
-                Box(modifier = Modifier.weight(1f)) {
-                    KeypadPlaceholderCard(modifier = Modifier.fillMaxSize())
-                }
-            }
+            )
             Spacer(modifier = Modifier.height(16.dp))
         }
 
@@ -232,51 +166,6 @@ private fun LandscapeContent(
             onCloseDrawers = onCloseDrawers,
         )
     }
-}
-
-/**
- * 显示区占位卡片：对齐 HTML 设计稿样式
- *   style="background: linear-gradient(180deg, var(--apple-card) 0%, var(--apple-secondary) 100%);
- *          box-shadow: var(--shadow-sm) inset;"
- *   h-56 = 224dp (close to our 220dp)
- */
-@Composable
-private fun DisplayPlaceholderCard(modifier: Modifier = Modifier) {
-    val dark = isDarkTheme()
-    // light: card = white, secondary = Background200
-    // dark:  card = PanelAppleDark (#38414D), secondary = 略深
-    val top: Color    = if (dark) PanelAppleDark else Color(0xFFFFFFFF)
-    val bottom: Color = if (dark) Color(0xFF2C343E) else Background100
-    val gradient = Brush.verticalGradient(
-        0.0f to top,
-        1.0f to bottom,
-    )
-    androidx.compose.foundation.layout.Box(
-        modifier = modifier
-            .height(220.dp)
-            .clip(androidx.compose.foundation.shape.RoundedCornerShape(28.8.dp))
-            .background(gradient),
-    ) {}
-}
-
-/**
- * 按键区占位卡片：下方空白卡片（样式与显示卡片一致，opacity 0.6）
- */
-@Composable
-private fun KeypadPlaceholderCard(modifier: Modifier = Modifier) {
-    val dark = isDarkTheme()
-    val top: Color    = (if (dark) PanelAppleDark else Color(0xFFFFFFFF)).copy(alpha = if (dark) 0.92f else 0.85f)
-    val bottom: Color = (if (dark) Color(0xFF2C343E) else Background100).copy(alpha = if (dark) 0.92f else 0.60f)
-    val gradient = Brush.verticalGradient(
-        0.0f to top,
-        1.0f to bottom,
-    )
-    androidx.compose.foundation.layout.Box(
-        modifier = modifier
-            .height(420.dp)
-            .clip(androidx.compose.foundation.shape.RoundedCornerShape(28.8.dp))
-            .background(gradient),
-    ) {}
 }
 
 @Composable

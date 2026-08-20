@@ -177,4 +177,12 @@ data class CalculatorUiState(
     val menuOrder: List<CalcMode> = CalcMode.defaultOrder,
     val themeMode: ThemeMode = ThemeMode.Auto,
     val themeColor: Color = ThemeColorPresets.Blue.color,
+    /**
+     * 各模块私有状态（按 [CalcMode] 索引）。
+     *
+     * - 模块之间互不读取对方的状态，避免耦合
+     * - 多人协同时每人只改自己模块的 State 类与 reducer，
+     *   本字段是单一 Map 容器，**新增模块不需修改本字段定义**
+     */
+    val moduleStates: Map<CalcMode, com.example.smartcalculator.ui.modules.ModuleState> = emptyMap(),
 )

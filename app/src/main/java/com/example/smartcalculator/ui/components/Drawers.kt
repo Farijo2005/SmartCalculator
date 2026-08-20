@@ -71,6 +71,7 @@ import com.example.smartcalculator.ui.theme.ThemeColorPresets
 import com.example.smartcalculator.ui.theme.ThemeColorPreset
 import com.example.smartcalculator.ui.components.AddIcon
 import com.example.smartcalculator.ui.components.ChevronRightIcon
+import com.example.smartcalculator.ui.modules.MatlabSetSubMenu
 
 /**
  * HTML `cubic-bezier(0.16, 1, 0.3, 1)` 的精确等效。
@@ -244,6 +245,8 @@ fun ModeDrawer(
                             animationSpec = tween(180, easing = PopOverEasing),
                         ) + fadeOut(tween(140)),
                     ) {
+                        // 二级子菜单独立在 modules/MatlabSetSubMenu.kt 中维护
+                        // 兄弟独立修改，不需要触碰本共享文件
                         MatlabSetSubMenu()
                     }
                 }
@@ -272,52 +275,6 @@ fun ModeDrawer(
                     )
                 }
             }
-        }
-    }
-}
-
-/**
- * MATLAB 集二级子菜单。
- *
- * - 设计原则：每个子模块视为独立程序，但与所有其他模块共用同一份历史记录
- *   （由 [CalculatorViewModel] 单一来源维护），切换不丢失上下文。
- * - 多人协同：子模块之间状态隔离，后续可在 ViewModel 层接入远端同步通道，
- *   UI 层无需改动即可支持多人同时在线编程。
- * - 内容占位：当前仅展示容器结构，具体子模块按需逐步接入。
- */
-@Composable
-private fun MatlabSetSubMenu() {
-    val dark = isDarkTheme()
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 26.dp, end = 4.dp, top = 2.dp, bottom = 4.dp),
-    ) {
-        // 子模块逐步接入时的占位提示
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp, horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Box(
-                modifier = Modifier.size(6.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "·",
-                    color = if (dark) Text200.copy(alpha = 0.50f)
-                           else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.50f),
-                    fontSize = 12.sp,
-                )
-            }
-            Text(
-                text = "子模块逐步接入中",
-                style = MaterialTheme.typography.labelSmall,
-                color = if (dark) Text200.copy(alpha = 0.55f)
-                       else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.60f),
-            )
         }
     }
 }
