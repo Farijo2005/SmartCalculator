@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
@@ -48,11 +49,11 @@ fun ModuleLayout(
             Box(modifier = Modifier.weight(1f), content = keypad)
         }
     } else {
-        // 竖屏：上下排列，显示区在上、按键区在下
-        Column(modifier = modifier) {
-            Box(modifier = Modifier.fillMaxWidth(), content = display)
+        // 竖屏：上下排列，显示区在上（约45%）、按键区在下（约55%）
+        Column(modifier = modifier.fillMaxHeight()) {
+            Box(modifier = Modifier.fillMaxWidth().weight(0.45f), content = display)
             Spacer(modifier = Modifier.height(16.dp))
-            Box(modifier = Modifier.fillMaxWidth(), content = keypad)
+            Box(modifier = Modifier.fillMaxWidth().weight(0.55f), content = keypad)
         }
     }
 }

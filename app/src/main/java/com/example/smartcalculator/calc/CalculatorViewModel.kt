@@ -52,6 +52,55 @@ class CalculatorViewModel(application: Application) : AndroidViewModel(applicati
         persist()
     }
 
+    // ===== 模块意图分发 =====
+    /**
+     * 各模块按键意图统一入口。
+     * 每人加自己模式的 reducer 分支，Git 不冲突。
+     */
+    fun dispatchModuleIntent(mode: CalcMode, intent: com.example.smartcalculator.ui.modules.ModuleIntent) {
+        _uiState.update { s ->
+            val states = s.moduleStates.toMutableMap()
+            when (mode) {
+                CalcMode.EquationSolver -> {
+                    val old = states[mode] as? com.example.smartcalculator.ui.modules.EquationSolverModuleState
+                        ?: com.example.smartcalculator.ui.modules.EquationSolverModuleState()
+                    val newState = com.example.smartcalculator.ui.modules.reduceEquationSolver(old, intent)
+                    states[mode] = newState
+
+                    // Evaluate 成功时写入一条历史
+                    if (intent is com.example.smartcalculator.ui.modules.ModuleIntent.Evaluate &&
+                        newState.results.isNotEmpty() && newState.errorMsg == null
+                    ) {
+                        val expr = when (newState.subType) {
+                            com.example.smartcalculator.ui.modules.SUB_POLY ->
+                                newState.polyCoeffs.joinToString(", ") + " = 0"
+                            else -> buildString {
+                                val vars = "xyzuvw".toCharArray().take(newState.linearDim)
+                                newState.linearMatrix.forEachIndexed { r, row ->
+                                    append(row.take(newState.linearDim).mapIndexed { i, v ->
+                                        val sign = if (i == 0) "" else " + "
+                                        sign + "($v)${vars[i]}"
+                                    }.joinToString(""))
+                                    append(" = ${row.last()} ; ")
+                                }
+                            }
+                        }
+                        s.copy(
+                            moduleStates = states,
+                            history = listOf(
+                                HistoryItem(
+                                    expression = expr,
+                                    result = newState.results.joinToString(" ; ")
+                                )
+                            ) + s.history
+                        )
+                    } else s.copy(moduleStates = states)
+                }
+                else -> s
+            }
+        }
+    }
+
     // ===== 菜单排序 =====
     fun moveMenuMode(from: Int, to: Int) {
         _uiState.update { s ->
