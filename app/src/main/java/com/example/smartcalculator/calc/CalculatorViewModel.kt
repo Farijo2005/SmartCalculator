@@ -9,6 +9,9 @@ import com.example.smartcalculator.ui.theme.ThemeMode
 import com.example.smartcalculator.ui.theme.ThemeColorPresets
 import com.example.smartcalculator.ui.theme.parseThemeColor
 import com.example.smartcalculator.ui.theme.serializeThemeColor
+import com.example.smartcalculator.ui.modules.ModuleIntent
+import com.example.smartcalculator.ui.modules.ModuleState
+import com.example.smartcalculator.ui.modules.StandardModuleState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -59,6 +62,275 @@ class CalculatorViewModel(application: Application) : AndroidViewModel(applicati
             s.copy(menuOrder = order)
         }
         persist()
+    }
+
+    // ===== 模块意图分发入口 =====
+    /**
+     * 所有模块统一通过此入口发送 [ModuleIntent]。
+     * 目前实现 [CalcMode.Standard] 的意图；其他模块接入时，在下面补充分支即可。
+     */
+    fun onModuleIntent(mode: CalcMode, intent: ModuleIntent) {
+        when (mode) {
+            CalcMode.Standard -> reduceStandard(intent)
+            else -> { /* 其他模块接入时实现各自 reducer */ }
+        }
+    }
+
+    // ===== 标准模块：私有 reducer 数据 =====
+    // stdExpr：输入行原始字符串（唯一真相源，无空格，严格按键顺序，如 "9+7+7+7"）
+    // stdOperandStart：当前正在输入的"数字片段"在 stdExpr 中的起始下标。
+    //     用于 ± / % / ⌫ 等需要修改当前数字时，精准替换表达式尾部。
+    // stdJustEvaluated：刚按 = 后为 true —— 下一次数字输入会重置表达式（开启新一轮）
+    private val stdExpr = StringBuilder()
+    private var stdOperandStart: Int = 0
+    private var stdJustEvaluated: Boolean = false
+
+    private val OP_CHARS = setOf('+', '−', '×', '÷')
+
+    private fun standardState(): StandardModuleState {
+        val cur = _uiState.value.moduleStates[CalcMode.Standard] as? StandardModuleState
+        return cur ?: StandardModuleState()
+    }
+
+    private fun updateStandardState(transform: (StandardModuleState) -> StandardModuleState) {
+        _uiState.update { s ->
+            val cur = s.moduleStates[CalcMode.Standard] as? StandardModuleState
+                ?: StandardModuleState()
+            val next = transform(cur)
+            s.copy(moduleStates = s.moduleStates + (CalcMode.Standard to next))
+        }
+    }
+
+    /**
+     * 把输入行字符串解析成 token 列表（数字字符串 与 运算符 交替），
+     * 并保证最后一个 token 一定是数字（如果末尾是运算符则丢弃）。
+     */
+    private fun parseExprTokens(exprStr: String): MutableList<String> {
+        if (exprStr.isBlank()) return mutableListOf()
+        val tokens = mutableListOf<String>()
+        val buf = StringBuilder()
+        for (ch in exprStr) {
+            if (ch in OP_CHARS) {
+                if (buf.isNotEmpty()) {
+                    tokens.add(buf.toString())
+                    buf.clear()
+                }
+                tokens.add(ch.toString())
+            } else {
+                buf.append(ch)
+            }
+        }
+        if (buf.isNotEmpty()) tokens.add(buf.toString())
+        val last = tokens.lastOrNull()
+        if (last != null && last.length == 1 && last[0] in OP_CHARS) {
+            tokens.removeLast()
+        }
+        return tokens
+    }
+
+    /** 对 tokens 从左到右求值（严格按用户输入顺序，不考虑 ×÷ 优先级）。 */
+    private fun evalTokens(tokens: List<String>): Double? {
+        if (tokens.isEmpty()) return null
+        var acc: Double = tokens[0].toDoubleOrNull() ?: return null
+        var i = 1
+        while (i < tokens.size) {
+            val op = tokens[i]
+            val num = tokens[i + 1].toDoubleOrNull() ?: return null
+            acc = applyOp(op, acc, num)
+            i += 2
+        }
+        return acc
+    }
+
+    /** 根据 stdExpr 重新计算答案行，同时更新输入行；同时把 evaluated 置为 false（进入输入态）。 */
+    private fun refreshStandardDisplay(resetEvaluated: Boolean = true) {
+        val exprStr = stdExpr.toString()
+        val tokens = parseExprTokens(exprStr)
+        val value = evalTokens(tokens)
+        val result = if (value == null) "0" else formatResult(value)
+        updateStandardState {
+            it.copy(
+                expression = exprStr,
+                display = result,
+                evaluated = if (resetEvaluated) false else it.evaluated,
+            )
+        }
+    }
+
+    /** 取"当前操作数字符串"（表达式中 stdOperandStart 之后的内容）。 */
+    private fun currentOperand(): String =
+        if (stdOperandStart in 0..stdExpr.length) stdExpr.substring(stdOperandStart) else ""
+
+    /** 替换 stdExpr 中当前操作数字符串为新值。 */
+    private fun replaceCurrentOperand(newOperand: String) {
+        val prefix = stdExpr.substring(0, stdOperandStart)
+        stdExpr.clear()
+        stdExpr.append(prefix).append(newOperand)
+    }
+
+    /** 标准模块按键处理（输入行 + 实时答案行，两行始终亮色）。 */
+    private fun reduceStandard(intent: ModuleIntent) {
+        when (intent) {
+            is ModuleIntent.Clear -> {
+                stdExpr.clear()
+                stdOperandStart = 0
+                stdJustEvaluated = false
+                updateStandardState { StandardModuleState() }
+            }
+            is ModuleIntent.Backspace -> handleStandardBackspace()
+            is ModuleIntent.Input -> {
+                when (intent.value) {
+                    "+", "−", "×", "÷" -> handleStandardOperator(intent.value)
+                    "." -> handleStandardDecimal()
+                    else -> handleStandardDigit(intent.value)
+                }
+            }
+            is ModuleIntent.Evaluate -> handleStandardEquals()
+            is ModuleIntent.Custom -> {
+                when (intent.key) {
+                    "negate" -> handleStandardNegate()
+                    "percent" -> handleStandardPercent()
+                }
+            }
+        }
+    }
+
+    private fun handleStandardDigit(digit: String) {
+        if (digit.length != 1 || !digit[0].isDigit()) return
+        if (stdJustEvaluated) {
+            stdExpr.clear()
+            stdExpr.append(digit)
+            stdOperandStart = 0
+            stdJustEvaluated = false
+            refreshStandardDisplay()
+            return
+        }
+        val operand = currentOperand()
+        val digitsOnly = operand.filter { it.isDigit() }
+        if (digitsOnly.length >= 15) return
+        when {
+            operand == "0" -> replaceCurrentOperand(digit)
+            operand == "-0" -> replaceCurrentOperand("-$digit")
+            else -> stdExpr.append(digit)
+        }
+        refreshStandardDisplay()
+    }
+
+    private fun handleStandardDecimal() {
+        if (stdJustEvaluated) {
+            stdExpr.clear()
+            stdExpr.append("0.")
+            stdOperandStart = 0
+            stdJustEvaluated = false
+            refreshStandardDisplay()
+            return
+        }
+        val operand = currentOperand()
+        if ('.' in operand) return
+        if (operand.isEmpty()) stdExpr.append("0.") else stdExpr.append('.')
+        refreshStandardDisplay()
+    }
+
+    private fun handleStandardOperator(op: String) {
+        val opChar = op.firstOrNull() ?: return
+        if (stdJustEvaluated) {
+            stdExpr.clear()
+            val lastResult = standardState().display.takeIf { it != "错误" } ?: "0"
+            stdExpr.append(lastResult)
+            stdOperandStart = 0
+            stdJustEvaluated = false
+        }
+        if (stdExpr.isEmpty()) return
+        val last = stdExpr.last()
+        if (last in OP_CHARS) {
+            stdExpr.setCharAt(stdExpr.length - 1, opChar)
+        } else {
+            stdExpr.append(opChar)
+            stdOperandStart = stdExpr.length
+        }
+        refreshStandardDisplay()
+    }
+
+    private fun handleStandardBackspace() {
+        if (stdExpr.isEmpty()) return
+        // 按 = 后紧接着按退格 → 取消 evaluated 状态（回到输入态），继续编辑表达式
+        if (stdJustEvaluated) stdJustEvaluated = false
+        val deleted = stdExpr[stdExpr.length - 1]
+        stdExpr.deleteCharAt(stdExpr.length - 1)
+        if (deleted in OP_CHARS) {
+            val idx = stdExpr.indexOfLast { it in OP_CHARS }
+            stdOperandStart = idx + 1
+        }
+        refreshStandardDisplay()
+    }
+
+    private fun handleStandardEquals() {
+        val tokens = parseExprTokens(stdExpr.toString())
+        if (tokens.isEmpty()) return
+        val value = evalTokens(tokens) ?: return
+        val resultStr = formatResult(value)
+        val historyExpr = tokens.joinToString("")
+        val item = HistoryItem(expression = historyExpr, result = resultStr)
+        _uiState.update { s ->
+            s.copy(history = listOf(item) + s.history.take(99))
+        }
+        persist()
+        stdJustEvaluated = true
+        // = 之后：翻转显示（上小暗 / 下大亮），把 evaluated=true 写入 state
+        val exprStr = stdExpr.toString()
+        updateStandardState {
+            it.copy(
+                expression = exprStr,
+                display = resultStr,
+                evaluated = true,
+            )
+        }
+    }
+
+    private fun handleStandardNegate() {
+        val operand = currentOperand()
+        if (operand.isEmpty()) return
+        val newOperand = when {
+            operand == "0" -> "-0"
+            operand.startsWith('-') -> operand.drop(1)
+            else -> "-$operand"
+        }
+        replaceCurrentOperand(newOperand)
+        refreshStandardDisplay()
+    }
+
+    private fun handleStandardPercent() {
+        val operand = currentOperand()
+        val v = operand.toDoubleOrNull() ?: return
+        val newOperand = formatNumber(v / 100.0)
+        replaceCurrentOperand(newOperand)
+        refreshStandardDisplay()
+    }
+
+    private fun applyOp(op: String, lhs: Double, rhs: Double): Double = when (op) {
+        "+" -> lhs + rhs
+        "−" -> lhs - rhs
+        "×" -> lhs * rhs
+        "÷" -> if (rhs == 0.0) Double.NaN else lhs / rhs
+        else -> Double.NaN
+    }
+
+    /** 数字格式化：去除 .0 小数尾零，NaN / Infinity 显示 "错误"，大数字用科学计数法兜底。 */
+    private fun formatResult(v: Double): String = when {
+        v.isNaN() || v.isInfinite() -> "错误"
+        else -> formatNumber(v)
+    }
+
+    private fun formatNumber(v: Double): String {
+        if (v.isNaN() || v.isInfinite()) return "错误"
+        // 整数：直接 toString 去掉 .0
+        if (v == v.toLong().toDouble() && v in Long.MIN_VALUE.toDouble()..Long.MAX_VALUE.toDouble()) {
+            return v.toLong().toString()
+        }
+        // 普通小数：先拼字符串后去尾零
+        val raw = v.toString()
+        return if (raw.contains('E') || raw.contains('e')) raw
+        else raw.trimEnd('0').trimEnd('.')
     }
 
     // ===== 持久化 =====

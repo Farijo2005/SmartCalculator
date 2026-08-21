@@ -95,6 +95,12 @@ fun PopOverContainer(
     visible: Boolean,
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 19.2.dp,
+    /**
+     * 是否让不透明底色铺满整个玻璃卡片高度。
+     * - true：用于 SettingsDrawer 这种外部传了 `.fillMaxSize()` 的调用方，保证卡片空白区域也有磨砂遮罩
+     * - false（默认）：用于 ModeDrawer / HistoryDrawer 这种「跟随内容高度」的抽屉，避免强行拉满
+     */
+    fillContent: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     AnimatedVisibility(
@@ -114,8 +120,27 @@ fun PopOverContainer(
             blurRadius = 20.dp,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
-                content()
+            // 追加一层不透明底色，模拟苹果风格高斯模糊的磨砂效果。
+            // 与自定义主题色弹窗同款不透明度：深色 0.82 / 浅色 0.88
+            val dark = isDarkTheme()
+            val dialogBg = if (dark) Color(0xFF38414D).copy(alpha = 0.82f)
+                           else Color(0xFFFFFFFF).copy(alpha = 0.88f)
+            val swallowInteraction = remember { MutableInteractionSource() }
+            val overlayModifier = if (fillContent) {
+                Modifier.fillMaxSize().background(dialogBg)
+            } else {
+                Modifier.fillMaxWidth().background(dialogBg)
+            }
+            Box(
+                modifier = overlayModifier.clickable(
+                    interactionSource = swallowInteraction,
+                    indication = null,
+                    onClick = {},
+                ),
+            ) {
+                CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
+                    content()
+                }
             }
         }
     }
@@ -147,7 +172,8 @@ fun DrawerBackdrop(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.18f))
+                // 苹果风格高斯模糊：遮罩加深，与自定义主题色弹窗同款
+                .background(Color.Black.copy(alpha = 0.40f))
                 .clickable(
                     interactionSource = interaction,
                     indication = null,
@@ -416,6 +442,7 @@ fun SettingsDrawer(
         visible = visible,
         modifier = modifier,
         cornerRadius = 28.8.dp,   // --apple-radius-lg = 1.8rem = 28.8dp
+        fillContent = true,       // 设置抽屉外层有 .fillMaxSize()，需要填满磨砂遮罩
     ) {
         Column(modifier = Modifier.padding(16.dp)) {  // p-4 = 16dp
             Row(
