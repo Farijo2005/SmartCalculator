@@ -75,13 +75,68 @@ class CalculatorViewModel(application: Application) : AndroidViewModel(applicati
                             com.example.smartcalculator.ui.modules.SUB_POLY ->
                                 newState.polyCoeffs.joinToString(", ") + " = 0"
                             else -> buildString {
-                                val vars = "xyzuvw".toCharArray().take(newState.linearDim)
-                                newState.linearMatrix.forEachIndexed { r, row ->
-                                    append(row.take(newState.linearDim).mapIndexed { i, v ->
-                                        val sign = if (i == 0) "" else " + "
-                                        sign + "($v)${vars[i]}"
-                                    }.joinToString(""))
-                                    append(" = ${row.last()} ; ")
+                                // 多元一次 5×6 网格：和 evaluateSafe 相同逻辑（含"鸡兔同笼人性化移项"）生成人类可读方程
+                                val flat = newState.linearFlat
+                                val rows = 5; val aCols = 5; val cols = 6
+                                fun isFilled(s: String): Boolean {
+                                    val t = s.trim(); return t.isNotEmpty() && t != "-" && t != "." && t != "/"
+                                }
+                                val filledMat = flat.map(::isFilled)
+                                data class RowSpec(
+                                    val rowIdx: Int,
+                                    val a: DoubleArray,
+                                    val b: Double,
+                                    val maxACol: Int,
+                                )
+                                val rowsInfo = (0 until rows).mapNotNull { r ->
+                                    val bIdx = r * cols + aCols
+                                    val bFilled = filledMat[bIdx]
+                                    var lastACol = -1
+                                    for (c in (aCols - 1) downTo 0) {
+                                        if (filledMat[r * cols + c]) { lastACol = c; break }
+                                    }
+                                    if (lastACol < 0) return@mapNotNull null
+                                    val coeffsRaw = DoubleArray(aCols) { c ->
+                                        com.example.smartcalculator.ui.modules.parseCellToDouble(flat[r * cols + c])
+                                    }
+                                    val bRaw: Double
+                                    val effMaxA: Int
+                                    if (bFilled) {
+                                        bRaw = com.example.smartcalculator.ui.modules.parseCellToDouble(flat[bIdx])
+                                        effMaxA = lastACol
+                                    } else {
+                                        // 人性化：常数在左边 → 自动移到右边变号
+                                        val constVal = coeffsRaw[lastACol]
+                                        coeffsRaw[lastACol] = 0.0
+                                        bRaw = -constVal
+                                        effMaxA = (lastACol - 1 downTo 0).firstOrNull { c ->
+                                            kotlin.math.abs(coeffsRaw[c]) > 1e-12
+                                        } ?: -1
+                                    }
+                                    RowSpec(r, coeffsRaw, bRaw, effMaxA)
+                                }
+                                if (rowsInfo.isEmpty()) { append("(空增广矩阵)") }
+                                else {
+                                    val N = (rowsInfo.maxOf { it.maxACol } + 1).coerceAtLeast(1)
+                                    val vars = "xyzuvw".toCharArray().take(N)
+                                    val fmt = { d: Double ->
+                                        val rounded = kotlin.math.round(d * 1e9) / 1e9   // 四舍五入到 1e-9（防 "-0" 等）
+                                        val long = rounded.toLong()
+                                        if (kotlin.math.abs(rounded - long) < 1e-9) long.toString()
+                                        else "%.6f".format(rounded).trimEnd('0').trimEnd('.')
+                                    }
+                                    rowsInfo.forEach { ri ->
+                                        append(vars.mapIndexed { i, vn ->
+                                            val v = ri.a[i]
+                                            when {
+                                                kotlin.math.abs(v) < 1e-12 -> null
+                                                i == 0 -> "(${fmt(v)})$vn"
+                                                v < 0 -> " - (${fmt(-v)})$vn"
+                                                else -> " + (${fmt(v)})$vn"
+                                            }
+                                        }.filterNotNull().joinToString("").ifEmpty { "0" })
+                                        append(" = ${fmt(ri.b)} ; ")
+                                    }
                                 }
                             }
                         }

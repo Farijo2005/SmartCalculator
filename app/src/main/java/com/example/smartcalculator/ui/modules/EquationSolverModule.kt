@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -66,6 +68,14 @@ internal const val SUB_LINEAR = "LINEAR"  // 多元一次
 /** 一元多次 root([…]) 里固定提供的系数格数（7 个 = 0~6 次方，最高 6 次） */
 private const val POLY_MAX_CELLS = 7
 
+/** 多元一次：Excel 式固定坐标网格 5 行 × 6 列 = 30 格（前 5 列 = A 系数 x/y/z/u/v，最后 1 列 = b 右端项 = 等号右边）。
+ *  整行空就跳过；系数列只要有填就认这条方程。未知数个数 N = 所有有效行系数列的"最右非空列 + 1"，
+ *  并要求有效方程条数 M == N（方阵）。最多支持 5 元 5 方程。 */
+private const val LINEAR_ROWS = 5
+private const val LINEAR_A_COLS = 5   // 未知数个数上限（x,y,z,u,v）
+private const val LINEAR_COLS = LINEAR_A_COLS + 1  // + 1 列固定 b（右端项）
+private const val LINEAR_FLAT_SIZE = LINEAR_ROWS * LINEAR_COLS
+
 // ============================================================
 //  状态 & Reducer
 // ============================================================
@@ -86,10 +96,18 @@ data class EquationSolverModuleState(
     val polyDegree: Int = 6,
     val polyCoeffs: List<String> = List(7) { "" },
     // ---------- 多元一次 ----------
-    val linearDim: Int = 2,
-    // n × (n + 1) 增广矩阵 [A|b]，每格是未解析的字符串
-    val linearMatrix: List<List<String>> = List(2) { List(3) { "" } },
+    // 固定 5 行 × 6 列 = 30 格 Excel 式坐标网格（前 5 列 = x/y/z/u/v 系数，最后 1 列 = b 右端项）：
+    //   r 行 c 列 → flatIdx = r * LINEAR_COLS + c
+    // - 有效方程行：系数列（0..LINEAR_A_COLS-1）至少一格非空（整行空的自动跳过）
+    // - 未知数 N：所有有效方程中"系数列最右非空"的列号 + 1
+    // - 方程条数 M：有效行数
+    // - 要求 M == N（方阵），否则报错
+    // 自然支持 1~5 元。空格、"-"、"."、"/" 残缺输入视为 0。
+    val linearDim: Int = 5,
+    val linearFlat: List<String> = List(LINEAR_FLAT_SIZE) { "" },
     // ---------- 共享 ----------
+    // POLY ：first = 0..6（系数格索引），second 无用（=0）
+    // LINEAR：first = 0..LINEAR_ROWS-1（行），second = 0..LINEAR_COLS-1（列：0..4=系数，5=b）
     val activeCell: Pair<Int, Int> = 0 to 0,
     val results: List<String> = emptyList(),
     val errorMsg: String? = null,
@@ -139,7 +157,7 @@ internal fun reduceEquationSolver(
     ModuleIntent.Backspace -> state.editActive { it.dropLast(1) }
     ModuleIntent.Clear -> state.copy(
         polyCoeffs = List(POLY_MAX_CELLS) { "" },
-        linearMatrix = List(state.linearDim) { List(state.linearDim + 1) { "" } },
+        linearFlat = List(LINEAR_FLAT_SIZE) { "" },
         activeCell = 0 to 0,
         results = emptyList(),
         errorMsg = null,
@@ -148,13 +166,12 @@ internal fun reduceEquationSolver(
     is ModuleIntent.Custom -> when (intent.key) {
         "set_sub" -> {
             val s = intent.payload as? String ?: SUB_POLY
-            val linD = 2
             EquationSolverModuleState(
                 subType = s,
                 polyDegree = 6,
                 polyCoeffs = List(POLY_MAX_CELLS) { "" },
-                linearDim = linD,
-                linearMatrix = List(linD) { List(linD + 1) { "" } },
+                linearDim = 5,
+                linearFlat = List(LINEAR_FLAT_SIZE) { "" },
                 activeCell = 0 to 0,
             )
         }
@@ -169,16 +186,10 @@ internal fun reduceEquationSolver(
             )
         }
         "set_dim" -> {
-            val d = (intent.payload as? Int ?: 2).coerceAtLeast(2)
-            val old = state.linearMatrix
-            val new = List(d) { r ->
-                List(d + 1) { c ->
-                    old.getOrNull(r)?.getOrNull(c) ?: ""
-                }
-            }
+            // 保持兼容：线性方程组固定 5×6=30 网格，维度自动推断。仅记录 linearDim 回显。
+            val d = (intent.payload as? Int ?: 5).coerceAtLeast(1).coerceAtMost(LINEAR_A_COLS)
             state.copy(
                 linearDim = d,
-                linearMatrix = new,
                 activeCell = 0 to 0,
                 results = emptyList(),
                 errorMsg = null,
@@ -218,13 +229,10 @@ private inline fun EquationSolverModuleState.editActive(
             copy(polyCoeffs = newList, errorMsg = null)
         }
         SUB_LINEAR -> {
-            val row = linearMatrix.getOrNull(r) ?: return this
-            if (c !in row.indices) return this
-            val newRow = row.toMutableList().also { it[c] = block(it[c]) }
-            copy(
-                linearMatrix = linearMatrix.toMutableList().also { it[r] = newRow },
-                errorMsg = null,
-            )
+            if (r !in 0 until LINEAR_ROWS || c !in 0 until LINEAR_COLS) return this
+            val i = r * LINEAR_COLS + c
+            val newFlat = linearFlat.toMutableList().also { it[i] = block(it[i]) }
+            copy(linearFlat = newFlat, errorMsg = null)
         }
         else -> this
     }
@@ -234,23 +242,21 @@ private fun EquationSolverModuleState.moveActive(nextRow: Boolean): EquationSolv
     val (r, c) = activeCell
     val (nr, nc) = when (subType) {
         SUB_POLY -> {
-            val total = POLY_MAX_CELLS   // 固定 7 格（0..6 共 7 个索引）
+            val total = POLY_MAX_CELLS
             val newIdx = if (nextRow) {
                 (r + 1).coerceAtMost(total - 1)
             } else {
-                (r + 1) % total          // 下一格循环：最后一格 → 回到第一格（MATLAB手感）
+                (r + 1) % total
             }
             newIdx to 0
         }
         SUB_LINEAR -> {
-            val n = linearDim
-            val m = n + 1
             when {
-                nextRow -> ((r + 1).coerceAtMost(n - 1)) to 0
+                nextRow -> ((r + 1) % LINEAR_ROWS) to c.coerceIn(0 until LINEAR_COLS)
                 else -> {
-                    if (c + 1 < m) r to (c + 1)
-                    else if (r + 1 < n) (r + 1) to 0
-                    else r to c
+                    val flat = r * LINEAR_COLS + c
+                    val next = (flat + 1) % LINEAR_FLAT_SIZE
+                    (next / LINEAR_COLS) to (next % LINEAR_COLS)
                 }
             }
         }
@@ -281,13 +287,77 @@ private fun EquationSolverModuleState.evaluateSafe(): EquationSolverModuleState 
                     .mapIndexed { i, root -> "  x${i + 1} = ${root.fmt()}" }
             }
             SUB_LINEAR -> {
-                val n = linearDim
-                val A = Array(n) { r ->
-                    DoubleArray(n) { c -> parseCellToDouble(linearMatrix[r][c]) }
+                // 5 行 × 6 列固定 Excel 网格：前 5 列 LINEAR_A_COLS（x y z u v 系数）+ 最后 1 列 LINEAR_A_COLS = b（右端项）
+                // 规则：
+                //  1. "有效方程"：系数列（0..LINEAR_A_COLS-1）至少一格有填（整行空跳过）
+                //  2. 未知数个数 N = 所有有效方程中"系数列最右那个非空列"的索引 + 1（自动 1~LINEAR_A_COLS）
+                //  3. M = 有效方程条数
+                //  4. 要求 M == N（方阵），否则报错
+                //  5. 空格 / "-" / "." / "/" 残缺输入视为 0（parseCellToDouble 负责）
+                //  6. 【鸡兔同笼人性化】：为了兼容用户习惯"把常数项也写在左边（像 2x+4y-50=0）"的填法，
+                //     如果"整行 b 列（最后一列）是空，但系数列最后几个格子里最后一个填的是一个带/不带符号的常数"，
+                //     就自动把它视为"左边常数项"，移到方程右边 → b = -该项，未知数 N = (该常数列索引)。
+                //     这样用户填 2 4 -50 就自动变成 2x+4y = 50，无需手工移项。
+                fun isFilled(s: String): Boolean {
+                    val t = s.trim(); return t.isNotEmpty() && t != "-" && t != "." && t != "/"
                 }
-                val b = DoubleArray(n) { r -> parseCellToDouble(linearMatrix[r][n]) }
+                val filledMat = linearFlat.map(::isFilled)
+                data class RowSpec(
+                    val rowIdx: Int,
+                    val a: DoubleArray,          // 长度 N 的系数（后面统一根据 N 取前缀）
+                    val b: Double,
+                    val maxACol: Int,           // 系数列中最大的非空列索引
+                )
+                val rowsInfo = (0 until LINEAR_ROWS).mapNotNull { r ->
+                    // 1) 先看 b 列（最后一列）填没填
+                    val bIdx = r * LINEAR_COLS + LINEAR_A_COLS
+                    val bFilled = filledMat[bIdx]
+                    // 2) 在系数列（0..LINEAR_A_COLS-1）里找最后一个非空列
+                    var lastACol = -1
+                    for (c in (LINEAR_A_COLS - 1) downTo 0) {
+                        if (filledMat[r * LINEAR_COLS + c]) { lastACol = c; break }
+                    }
+                    if (lastACol < 0) return@mapNotNull null  // 系数列全空 = 整行空，跳过
+
+                    val coeffsRaw = DoubleArray(LINEAR_A_COLS) { c ->
+                        parseCellToDouble(linearFlat[r * LINEAR_COLS + c])
+                    }
+                    val bRaw: Double
+                    val effectiveMaxACol: Int
+                    if (bFilled) {
+                        // 标准情形：用户明确填了最后一列 b（右端项）
+                        bRaw = parseCellToDouble(linearFlat[bIdx])
+                        effectiveMaxACol = lastACol
+                    } else {
+                        // 人性化情形：b 列空，说明用户很可能把常数项塞在系数列"最后几个"里了
+                        // （经典写在左边 =0 的形式）。我们把系数列最后一个非空项 coeffsRaw[lastACol]
+                        //  当成"左边常数"，搬到右边变号 → b = -coeffsRaw[lastACol]，那格系数置 0
+                        // 未知数 = lastACol（因为原来第 0..lastACol-1 才是真系数）
+                        val constVal = coeffsRaw[lastACol]
+                        coeffsRaw[lastACol] = 0.0
+                        bRaw = -constVal
+                        // 再重新算真·最右系数列
+                        effectiveMaxACol = (lastACol - 1 downTo 0).firstOrNull { c ->
+                            kotlin.math.abs(coeffsRaw[c]) > 1e-12
+                        } ?: -1
+                    }
+                    RowSpec(r, coeffsRaw, bRaw, effectiveMaxACol)
+                }
+                require(rowsInfo.isNotEmpty()) { "至少填 1 行（前 5 列 = 系数 x/y/z/u/v，最后 1 列 = b 右端项；形如 2 4 0 0 0 50 表示 2x + 4y = 50）" }
+
+                val N = (rowsInfo.maxOf { it.maxACol } + 1).coerceAtLeast(1)
+                val M = rowsInfo.size
+                require(N <= LINEAR_A_COLS) { "未知数个数 N=$N 超过 5（网格最多支持 5 元，前 5 列填系数）" }
+                require(M == N) { "非方阵：未知数 $N 个，但只填了 $M 行有效方程（需要填 $N 行：每行前 $N 列写系数，最后 1 列 = b 右端项）" }
+
+                val A = Array(N) { DoubleArray(N) }
+                val b = DoubleArray(N)
+                rowsInfo.forEachIndexed { mi, ri ->
+                    for (j in 0 until N) A[mi][j] = ri.a[j]
+                    b[mi] = ri.b
+                }
                 val x = gaussElim(A, b) ?: error("系数矩阵奇异：无解或无穷多解")
-                val vars = "xyzuvw".toCharArray().take(n)
+                val vars = "xyzuvw".toCharArray().take(N)
                 x.mapIndexed { i, xi -> "  ${vars[i]} = ${xi.fmt()}" }
             }
             else -> emptyList()
@@ -308,7 +378,7 @@ private fun EquationSolverModuleState.evaluateSafe(): EquationSolverModuleState 
  *  - 分数："1/2"、"-3/4"、"0.1/2.5"（先算分子分母再相除，分母为 0 抛异常）
  *  - 空串 → 0.0
  */
-private fun parseCellToDouble(s: String): Double {
+internal fun parseCellToDouble(s: String): Double {
     val t = s.trim()
     if (t.isEmpty() || t == "-" || t == "." || t == "/") return 0.0
     if ("/" in t) {
@@ -640,17 +710,7 @@ private fun BoxScope.EquationSolverDisplay(
     val accent = ThemeColor.current
 
     Column(modifier = modifier.padding(16.dp)) {
-        // 维度对话框（多元一次点击顶部提示弹的）
-        val showDimDialog = remember { androidx.compose.runtime.mutableStateOf(false) }
         val titleShape = RoundedCornerShape(10.dp)
-        if (state.subType == SUB_LINEAR) {
-            DimDialog(
-                state = state,
-                onIntent = onIntent,
-                open = showDimDialog.value,
-                onDismiss = { showDimDialog.value = false },
-            )
-        }
 
         // ===== 主"编辑器"面板：液态玻璃命令窗口 =====
         val terminalShape = RoundedCornerShape(18.dp)
@@ -660,6 +720,14 @@ private fun BoxScope.EquationSolverDisplay(
         val bg = if (dark) Color(0xFF0E0F14) else Color(0xFFF5F6FA)
         val promptColor = accent
         val commentColor = LocalContentColor.current.copy(alpha = 0.5f)
+
+        // 面板内滚动：按下"计算"出结果/报错时，自动滑到 ans 让用户看到"已经算了"
+        val scrollState = rememberScrollState()
+        LaunchedEffect(state.results, state.errorMsg) {
+            if (state.results.isNotEmpty() || state.errorMsg != null) {
+                scrollState.animateScrollTo(scrollState.maxValue)
+            }
+        }
 
         Box(
             modifier = Modifier
@@ -682,7 +750,11 @@ private fun BoxScope.EquationSolverDisplay(
                 }
                 .padding(horizontal = 10.dp, vertical = 14.dp),
         ) {
-            Column {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(scrollState),   // 表格 + ans 太长就滚动，不会被裁掉看不到结果
+            ) {
                 // ===== 命令行编辑器区 =====
                 if (state.subType == SUB_POLY) {
                     PolyEditorLine(
@@ -694,12 +766,10 @@ private fun BoxScope.EquationSolverDisplay(
                         onClickIdx = { onPickCell(it, 0) },
                     )
                 } else {
-                    LinearEditorBlock(
-                        dim = state.linearDim,
-                        matrix = state.linearMatrix,
+                    LinearExcelGrid(
+                        flat = state.linearFlat,
                         active = state.activeCell,
                         accent = accent,
-                        promptColor = promptColor,
                         commentColor = commentColor,
                         onClickCell = { r, c -> onPickCell(r, c) },
                     )
@@ -770,23 +840,11 @@ private fun BoxScope.EquationSolverDisplay(
                 color = LocalContentColor.current.copy(alpha = 0.5f),
             )
         } else {
-            Box(
-                modifier = Modifier
-                    .clip(titleShape)
-                    .background(accent.copy(alpha = 0.08f))
-                    .clickable(
-                        indication = null,
-                        interactionSource = remember { MutableInteractionSource() },
-                        onClick = { showDimDialog.value = true },
-                    )
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-            ) {
-                Text(
-                    text = "多元一次 · 当前 ${state.linearDim} 元（点这里调 2~6 元）  >> x = A \\ b",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = LocalContentColor.current.copy(alpha = 0.65f),
-                )
-            }
+            Text(
+                text = "多元一次 · 5×6 表格（前 5 列 = x/y/z/u/v 系数，最后 1 列 = b 右端项，支持 1~5 元）",
+                style = MaterialTheme.typography.labelSmall,
+                color = LocalContentColor.current.copy(alpha = 0.5f),
+            )
         }
     }
 }
@@ -971,184 +1029,148 @@ private fun BlinkingCursor(accent: Color, isBefore: Boolean) {
     else Unit
 }
 
-/** 多元一次编辑器：矩阵形式 A \ b */
+/** 多元一次 5×6 Excel 坐标网格：
+ *   顶栏列名：[ x ][ y ][ z ][ u ][ v ]|[[ b ]]   （最后一列 accent 竖线分隔，表示 = 右端项）
+ *   每行左侧行号（1..5）+ 6 个等宽坐标框 `.weight(1f)` 均分，永远对齐，绝不错位。
+ *   每个单元格：空时描边框；填了数字液态玻璃；active 整格 accent 填充 + 闪烁光标 */
 @Composable
-private fun LinearEditorBlock(
-    dim: Int,
-    matrix: List<List<String>>,
+private fun LinearExcelGrid(
+    flat: List<String>,
     active: Pair<Int, Int>,
     accent: Color,
-    promptColor: Color,
     commentColor: Color,
     onClickCell: (r: Int, c: Int) -> Unit,
 ) {
-    val vars = "xyzuvw".take(dim)
-    Column {
-        // >> prompt + A \ b 提示（首行）
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = ">> ",
-                color = promptColor,
-                fontFamily = monoFont(),
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                text = "x = A \\ b  ",
-                color = promptColor,
-                fontFamily = monoFont(),
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                text = "% 其中 A($dim×$dim),  b($dim×1)",
-                color = commentColor,
-                fontFamily = monoFont(),
-                style = MaterialTheme.typography.labelSmall,
-            )
-        }
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // 变量名头
+    val rowGap = 5.dp
+    val colGap = 4.dp
+    val colNames = listOf("x", "y", "z", "u", "v", "b")
+    val cellShape = RoundedCornerShape(9.dp)
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // ===== 列名头（顶部一行）=====
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(colGap, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            // A 顶部列名
-            Box(
-                modifier = Modifier.width(2.dp),
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            repeat(dim) { i ->
+            Spacer(modifier = Modifier.width(22.dp))   // 行号占位
+            repeat(LINEAR_COLS) { c ->
                 Box(
                     modifier = Modifier.weight(1f),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = "  ${vars[i]}",
-                        color = commentColor,
+                        text = colNames[c],
+                        color = if (c == LINEAR_A_COLS) accent else commentColor,
                         fontFamily = monoFont(),
+                        fontWeight = FontWeight.SemiBold,
                         style = MaterialTheme.typography.labelSmall,
                     )
                 }
             }
-            // 分隔 |
-            Spacer(modifier = Modifier.width(6.dp))
-            Box(
-                modifier = Modifier.weight(1f),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "b",
-                    color = accent,
-                    fontFamily = monoFont(),
-                    style = MaterialTheme.typography.labelSmall,
-                )
-            }
         }
-        Spacer(modifier = Modifier.height(2.dp))
+        Spacer(modifier = Modifier.height(3.dp))
 
-        // 行内容（每行前有"矩阵左括号"字符 + A 元素 + 分隔竖线 + b 元素 + 右括号）
-        repeat(dim) { r ->
+        // ===== 5 行主体，每行 6 个等宽单元格 =====
+        repeat(LINEAR_ROWS) { r ->
+            if (r > 0) Spacer(modifier = Modifier.height(rowGap))
             Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(colGap, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text(
-                    text = when {
-                        dim == 1 -> "  ["
-                        r == 0 -> " ⎡"
-                        r == dim - 1 -> " ⎣"
-                        else -> " ⎢"
-                    },
-                    color = accent,
-                    fontFamily = monoFont(),
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                repeat(dim) { c ->
-                    MatrixToken(
-                        text = matrix.getOrNull(r)?.getOrNull(c) ?: "",
-                        active = active.first == r && active.second == c,
-                        accent = accent,
-                        commentColor = commentColor,
-                        modifier = Modifier.weight(1f),
-                        onClick = { onClickCell(r, c) },
+                // 行号 1..5（左侧）
+                Box(
+                    modifier = Modifier.width(22.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = (r + 1).toString(),
+                        color = commentColor.copy(alpha = 0.8f),
+                        fontFamily = monoFont(),
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.labelSmall,
                     )
                 }
-                // A 与 b 的分隔线（竖线）
-                Text(
-                    text = "│",
-                    color = accent.copy(alpha = 0.7f),
-                    fontFamily = monoFont(),
-                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
-                )
-                MatrixToken(
-                    text = matrix.getOrNull(r)?.getOrNull(dim) ?: "",
-                    active = active.first == r && active.second == dim,
-                    accent = accent,
-                    commentColor = commentColor,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onClickCell(r, dim) },
-                )
-                Text(
-                    text = when {
-                        dim == 1 -> "]"
-                        r == 0 -> "⎤"
-                        r == dim - 1 -> "⎦"
-                        else -> "⎥"
-                    },
-                    color = accent,
-                    fontFamily = monoFont(),
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-            }
-        }
-    }
-}
-
-/** 矩阵单元格 token：active 带 accent 填充 + 闪烁光标 */
-@Composable
-private fun MatrixToken(
-    text: String,
-    active: Boolean,
-    accent: Color,
-    commentColor: Color,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    val displayText = text.ifEmpty { "□" }
-    val color = when {
-        active -> Color.White
-        text.isEmpty() -> commentColor
-        else -> LocalContentColor.current
-    }
-    val bg = if (active) accent else Color.Transparent
-    val shape = RoundedCornerShape(6.dp)
-    Box(
-        modifier = modifier,
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            modifier = Modifier
-                .clip(shape)
-                .background(bg)
-                .clickable(
-                    indication = null,
-                    interactionSource = remember { MutableInteractionSource() },
-                    onClick = onClick,
-                )
-                .padding(horizontal = 6.dp, vertical = 3.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (active) BlinkingCursor(accent = accent, isBefore = true)
-                Text(
-                    text = displayText,
-                    color = color,
-                    fontFamily = monoFont(),
-                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                )
-                if (active) BlinkingCursor(accent = accent, isBefore = false)
+                repeat(LINEAR_COLS) { c ->
+                    val i = r * LINEAR_COLS + c
+                    val text = flat.getOrElse(i) { "" }
+                    val activeCell = r == active.first && c == active.second
+                    val isEmpty = text.isEmpty()
+                    val textColor = when {
+                        activeCell && !isEmpty -> Color.White
+                        isEmpty -> Color.Transparent
+                        else -> LocalContentColor.current
+                    }
+                    // b 列（最后一列）和 系数列视觉上有区分：b 列描边 / 背景都带 accent 淡色调
+                    val isBCol = c == LINEAR_A_COLS
+                    val emptyBorderColor = when {
+                        activeCell -> accent
+                        isBCol -> accent.copy(alpha = 0.45f)
+                        else -> commentColor.copy(alpha = 0.38f)
+                    }
+                    val layerModifier = if (isEmpty) {
+                        Modifier
+                            .weight(1f)
+                            .aspectRatio(1f)
+                            .border(1.2.dp, emptyBorderColor, cellShape)
+                            .clip(cellShape)
+                    } else {
+                        val bgColors = if (activeCell) listOf(accent, accent) else listOf(
+                            Color.White.copy(alpha = 0.8f),
+                            Color.White.copy(alpha = 0.55f),
+                        )
+                        Modifier
+                            .weight(1f)
+                            .aspectRatio(1f)
+                            .shadow(
+                                elevation = 5.dp,
+                                shape = cellShape,
+                                ambientColor = accent.copy(alpha = 0.08f),
+                                spotColor = Color.Black.copy(alpha = 0.05f),
+                                clip = false,
+                            )
+                            .clip(cellShape)
+                            .background(brush = Brush.verticalGradient(colors = bgColors), shape = cellShape)
+                            .border(0.8.dp, Color.White.copy(alpha = 0.55f), cellShape)
+                    }
+                    Box(
+                        modifier = layerModifier
+                            .clickable(
+                                indication = null,
+                                interactionSource = remember { MutableInteractionSource() },
+                                onClick = { onClickCell(r, c) },
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (isEmpty) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (activeCell) BlinkingCursor(accent = accent, isBefore = true)
+                                if (activeCell) BlinkingCursor(accent = accent, isBefore = false)
+                            }
+                        } else {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (activeCell) BlinkingCursor(accent = Color.White, isBefore = true)
+                                // 数字/分数：单行显示，过长时按比例缩放（避免字符跑出正方框）
+                                val scaleFactor = if (text.length > 6) 0.7f else if (text.length > 4) 0.85f else 1f
+                                androidx.compose.foundation.layout.Box(
+                                    modifier = Modifier.fillMaxWidth(0.92f),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        text = text,
+                                        color = textColor,
+                                        fontFamily = monoFont(),
+                                        softWrap = false,
+                                        maxLines = 1,
+                                        fontSize = (MaterialTheme.typography.bodyLarge.fontSize.value * scaleFactor).sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
+                                if (activeCell) BlinkingCursor(accent = Color.White, isBefore = false)
+                            }
+                        }
+                    }
+                }
             }
         }
     }
