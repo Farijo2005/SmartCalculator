@@ -136,7 +136,7 @@ private fun DisplaySection(state: ProgrammerModuleState, onIntent: (ModuleIntent
             ProgrammerSubMode.Radix -> RadixDisplay(state) { radix ->
                 onIntent(ModuleIntent.Custom("radix:activate:$radix"))
             }
-            ProgrammerSubMode.Bitwise -> BitwiseDisplay(state)
+            ProgrammerSubMode.Bitwise -> BitwiseDisplay(state, onIntent)
         }
     }
 }
@@ -347,108 +347,452 @@ private fun RowScope.RadixInputCell(
     }
 }
 
-// --- 位运算显示（两数）---
+// --- 位运算显示（两数 + 运算符行 + 结果行）---
 @Composable
-private fun BitwiseDisplay(state: ProgrammerModuleState) {
+private fun BitwiseDisplay(
+    state: ProgrammerModuleState,
+    onIntent: (ModuleIntent) -> Unit,
+) {
+    val dim = if (isDarkTheme()) Text200.copy(alpha = 0.45f)
+              else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+    val primary = MaterialTheme.colorScheme.primary
+    val secondary = MaterialTheme.colorScheme.secondary
+    val bright = LocalContentColor.current
+    val dark = isDarkTheme()
+
+    // 解析 LHS / RHS 为 Long（按当前 bitRadix），派生 DEC/HEX/BIN 副显示
+    val radix = state.bitRadix
+    val lhsLong = state.bitLhs.toLongOrNull(radix) ?: 0L
+    val rhsLong = if (state.bitRhs.isBlank()) null else state.bitRhs.toLongOrNull(radix)
+
+    val resultLong = state.bitResult.toLongOrNull(radix)
+
+    // 辅助：格式化 "BIN:xxxx xxxx xxxx"（从最低位开始每 4 位分组）
+    fun formatBinGrouped(v: Long): String {
+        val unsigned = if (v < 0) {
+            // 负数：显示 64 位补码，最低 32 位（8 组）足够
+            val bits = (v and 0xFFFFFFFFL).toString(2)
+            bits.padStart(32, '0')
+        } else {
+            val bits = v.toString(2)
+            val padLen = when {
+                bits.length <= 4 -> 4
+                bits.length <= 8 -> 8
+                bits.length <= 12 -> 12
+                bits.length <= 16 -> 16
+                bits.length <= 20 -> 20
+                bits.length <= 24 -> 24
+                bits.length <= 28 -> 28
+                else -> 32
+            }
+            bits.padStart(padLen, '0')
+        }
+        val grouped = unsigned.chunked(4).joinToString(" ")
+        return "BIN:$grouped"
+    }
+
+    // 辅助：格式化 "OCT:x  HEX:y" 一行
+    fun formatOctHex(v: Long): String {
+        val oct = v.toString(8)
+        val hex = v.toString(16).uppercase()
+        return "OCT:$oct   HEX:$hex"
+    }
+    // 辅助：格式化单行 "OCT:..."
+    fun formatOct(v: Long): String = "OCT:" + v.toString(8)
+    // 辅助：格式化单行 "HEX:..."
+    fun formatHex(v: Long): String = "HEX:" + v.toString(16).uppercase()
+    // 辅助：把 OCT / HEX / BIN 拼成同一行（用于 RESULT 副显）
+    fun formatOhb(v: Long): String {
+        val oct = v.toString(8)
+        val hex = v.toString(16).uppercase()
+        val bin = formatBinGrouped(v).removePrefix("BIN:")
+        return "OCT:$oct  HEX:$hex  BIN:$bin"
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp, vertical = 14.dp),
-        horizontalAlignment = Alignment.End,
-        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.Bottom),
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        val bright = LocalContentColor.current
-        val dim = if (isDarkTheme()) Text200.copy(alpha = 0.45f)
-                  else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-        val focusColor = MaterialTheme.colorScheme.primary
-
-        val titleSize = 14.sp
-        val valueSize = 28.sp
-        val valueWeight = FontWeight.Bold
-        val resultSize = 38.sp
-        val resultWeight = FontWeight.ExtraBold
-
-        // 左操作数
+        // ======= 顶部提示语（一行，小字号） =======
         Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 2.dp, vertical = 1.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val focusStroke = if (state.bitFocus == BitFocus.Lhs) focusColor.copy(alpha = 0.22f) else Color.Transparent
             Text(
-                "LHS", fontSize = titleSize,
-                color = if (state.bitFocus == BitFocus.Lhs) focusColor else dim,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .background(focusStroke, RoundedCornerShape(8.dp))
-                    .padding(horizontal = 8.dp, vertical = 2.dp),
-            )
-            Text(
-                text = state.bitLhs, fontSize = valueSize, fontWeight = valueWeight,
-                color = bright,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                text = "在方框中输入要计算的数（默认输入十进制数）。",
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Medium,
+                color = LocalContentColor.current.copy(alpha = 0.55f),
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+                softWrap = false,
             )
         }
 
-        // 运算符（如果选了）
-        if (state.bitOp != null) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    "  OP", fontSize = titleSize, color = dim,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    state.bitOp.symbol, fontSize = 20.sp,
-                    color = MaterialTheme.colorScheme.tertiary,
-                    fontWeight = FontWeight.Bold,
-                )
+        // =========================================================
+        // 第一行：LHS + RHS 两个可点击玻璃输入框（按截图格式）
+        // =========================================================
+        Row(Modifier.fillMaxWidth().weight(1.3f),
+            horizontalArrangement = Arrangement.spacedBy(11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BitwiseOperandCell(
+                label = "LHS",
+                valueText = state.bitLhs.ifBlank { "0" },
+                v = lhsLong,
+                radix = radix,
+                isActive = state.bitFocus == BitFocus.Lhs,
+                modifier = Modifier.weight(1f),
+                formatOctHex = ::formatOctHex,
+                formatBinGrouped = ::formatBinGrouped,
+                onClick = { onIntent(ModuleIntent.Custom("bit:focus:Lhs")) },
+            )
+            BitwiseOperandCell(
+                label = "RHS",
+                valueText = state.bitRhs.ifBlank { "0" },
+                v = rhsLong ?: 0L,
+                radix = radix,
+                isActive = state.bitFocus == BitFocus.Rhs,
+                modifier = Modifier.weight(1f),
+                formatOctHex = ::formatOctHex,
+                formatBinGrouped = ::formatBinGrouped,
+                onClick = { onIntent(ModuleIntent.Custom("bit:focus:Rhs")) },
+            )
+        }
+
+        // =========================================================
+        // 第二行：运算符按键（按用户给定符号：& | ^ ~ << >>）
+        // =========================================================
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OpSymbolKey("&", hint = "AND",
+                isSelected = state.bitOp == BitOp.AND,
+                primary, bright, dark) {
+                onIntent(ModuleIntent.Custom("bit:op:AND"))
+            }
+            OpSymbolKey("|", hint = "OR",
+                isSelected = state.bitOp == BitOp.OR,
+                primary, bright, dark) {
+                onIntent(ModuleIntent.Custom("bit:op:OR"))
+            }
+            OpSymbolKey("^", hint = "XOR",
+                isSelected = state.bitOp == BitOp.XOR,
+                primary, bright, dark) {
+                onIntent(ModuleIntent.Custom("bit:op:XOR"))
+            }
+            OpSymbolKey("~", hint = "NOT",
+                isSelected = false, // NOT 是单目，单独执行
+                primary = secondary, bright, dark) {
+                onIntent(ModuleIntent.Custom("bit:unary:NOT"))
+            }
+            OpSymbolKey("<<", hint = "SHL",
+                isSelected = state.bitOp == BitOp.SHL,
+                primary, bright, dark) {
+                onIntent(ModuleIntent.Custom("bit:op:SHL"))
+            }
+            OpSymbolKey(">>", hint = "SHR",
+                isSelected = state.bitOp == BitOp.SHR,
+                primary, bright, dark) {
+                onIntent(ModuleIntent.Custom("bit:op:SHR"))
             }
         }
 
-        // 右操作数（可能空）
+        // =========================================================
+        // 第三行：结果行（主值十进制大字号；下方小字号三行：OCT / HEX / BIN）
+        // =========================================================
         Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            Modifier.fillMaxWidth().weight(0.9f),
+            horizontalArrangement = Arrangement.spacedBy(11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val focusStroke = if (state.bitFocus == BitFocus.Rhs) focusColor.copy(alpha = 0.22f) else Color.Transparent
-            Text(
-                "RHS", fontSize = titleSize,
-                color = if (state.bitFocus == BitFocus.Rhs) focusColor else dim,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .background(focusStroke, RoundedCornerShape(8.dp))
-                    .padding(horizontal = 8.dp, vertical = 2.dp),
-            )
-            Text(
-                text = state.bitRhs.ifBlank { "—" },
-                fontSize = valueSize, fontWeight = valueWeight,
-                color = if (state.bitRhs.isBlank()) dim else bright,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            val hasResult = state.bitResult.isNotBlank()
+            val resV = resultLong ?: 0L
+            // 结果主框（占 2 份宽度）：主值十进制 + 副一行 OCT/HEX/BIN
+            BitwiseResultCell(
+                modifier = Modifier.weight(2f),
+                decResultText = if (hasResult) (resV.toString(10)) else "—",
+                v = resV,
+                visible = hasResult,
+                bright = bright,
+                dim = dim,
+                primary = primary,
+                dark = dark,
+                formatOhb = ::formatOhb,
             )
         }
+    }
+}
 
-        // 分隔线
+/** 位运算 LHS / RHS 单框：第一行 "LHS：值"；副显 OCT/HEX 与 BIN 两行 */
+@Composable
+private fun RowScope.BitwiseOperandCell(
+    label: String,        // "LHS" or "RHS"（与值放在同一行）
+    valueText: String,    // 当前 radix 下的输入字符串
+    v: Long,              // 解析后的 Long 值（派生副显示）
+    radix: Int,
+    isActive: Boolean,
+    modifier: Modifier,
+    formatOctHex: (Long) -> String,
+    formatBinGrouped: (Long) -> String,
+    onClick: () -> Unit,
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    val dark = isDarkTheme()
+
+    val top: Color = (if (dark) Color(0xFF2C343E) else Color(0xFFFFFFFF))
+        .copy(alpha = 0.94f)
+    val bottom: Color = (if (dark) Color(0xFF272F38) else Color(0xFFECECF0))
+        .copy(alpha = 0.94f)
+    val gradient = Brush.verticalGradient(0.0f to top, 1.0f to bottom)
+    val borderColor = if (isActive) primary.copy(alpha = 0.78f)
+                      else Color.White.copy(alpha = if (dark) 0.16f else 0.08f)
+    val interactionSource = remember { MutableInteractionSource() }
+
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxSize()
+            .clip(RoundedCornerShape(20.dp))
+            .background(gradient)
+            .border(if (isActive) 1.6.dp else 1.dp, borderColor, RoundedCornerShape(20.dp))
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+            ),
+    ) {
+        val h = maxHeight
+        // 根据实际高度动态缩字号
+        val valueFont = when {
+            h < 60.dp -> 17.sp
+            h < 70.dp -> 19.sp
+            h < 80.dp -> 21.sp
+            else -> 23.sp
+        }
+        val labelFont = when {
+            h < 60.dp -> 12.sp
+            h < 75.dp -> 13.sp
+            else -> 14.sp
+        }
+        val subFont = when {
+            h < 65.dp -> 10.5.sp
+            else -> 11.5.sp
+        }
+
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            // —— 第一行：LHS：<value> 同一行 ——
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "$label：",
+                    fontSize = labelFont,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (isActive) primary else LocalContentColor.current.copy(alpha = 0.75f),
+                )
+                Text(
+                    valueText,
+                    fontSize = valueFont,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = LocalContentColor.current,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            // —— 底部副显两行：OCT/HEX 与 BIN ——
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 0.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    formatOctHex(v),
+                    fontSize = subFont,
+                    fontWeight = FontWeight.SemiBold,
+                    color = LocalContentColor.current.copy(alpha = 0.65f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Clip,
+                    softWrap = false,
+                )
+                Text(
+                    formatBinGrouped(v),
+                    fontSize = (subFont.value - 0.2f).coerceAtLeast(10f).sp,
+                    fontWeight = FontWeight.Medium,
+                    color = LocalContentColor.current.copy(alpha = 0.55f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Clip,
+                    softWrap = false,
+                    letterSpacing = 0.3.sp,
+                )
+            }
+        }
+    }
+}
+
+/** 运算符按键（符号形式）：AND→&, OR→|, XOR→^, NOT→~, SHL→<<, SHR→>> */
+@Composable
+private fun RowScope.OpSymbolKey(
+    symbol: String,
+    hint: String,
+    isSelected: Boolean,
+    primary: Color,
+    bright: Color,
+    dark: Boolean,
+    onClick: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    BoxWithConstraints(
+        modifier = Modifier
+            .weight(1f)
+            .aspectRatio(1.55f),
+        contentAlignment = Alignment.Center,
+    ) {
+        val bg = if (isSelected) primary.copy(alpha = 0.22f)
+                 else Color.White.copy(alpha = if (dark) 0.08f else 0.05f)
+        val border = if (isSelected) primary.copy(alpha = 0.75f)
+                     else Color.White.copy(alpha = if (dark) 0.14f else 0.08f)
+        val fg = if (isSelected) primary else bright
+        val fontSize = if (maxHeight < 36.dp) 16.sp else 18.sp
+        val hintSize = if (maxHeight < 36.dp) 9.sp else 9.5.sp
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(12.dp))
+                .background(bg)
+                .border(1.dp, border, RoundedCornerShape(12.dp))
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    onClick = onClick,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally,
+                   verticalArrangement = Arrangement.Center) {
+                Text(symbol, fontSize = fontSize,
+                     fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Bold,
+                     color = fg)
+                Text(hint, fontSize = hintSize,
+                     fontWeight = FontWeight.Medium,
+                     color = fg.copy(alpha = 0.55f),
+                     letterSpacing = 0.5.sp)
+            }
+        }
+    }
+}
+
+/** 结果显示框：占 2 列宽度。大字十进靠右；下一行小字号同一行 OCT/HEX/BIN —— Box 绝对定位，不裁切字形 */
+@Composable
+private fun RowScope.BitwiseResultCell(
+    modifier: Modifier,
+    decResultText: String,  // 十进制结果作为大字号
+    v: Long,
+    visible: Boolean,
+    bright: Color,
+    dim: Color,
+    primary: Color,
+    dark: Boolean,
+    formatOhb: (Long) -> String,   // 合并成同一行
+) {
+    val top = (if (dark) Color(0xFF323B47) else Color(0xFFF7F7FB))
+        .copy(alpha = 0.95f)
+    val bottom = (if (dark) Color(0xFF2B333D) else Color(0xFFE6E6EF))
+        .copy(alpha = 0.95f)
+    val gradient = Brush.verticalGradient(0.0f to top, 1.0f to bottom)
+
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxSize()
+            .clip(RoundedCornerShape(18.dp))
+            .background(gradient)
+            .border(1.4.dp, primary.copy(alpha = 0.65f), RoundedCornerShape(18.dp)),
+    ) {
+        val h = maxHeight
+        val mainFont = when {
+            !visible -> 18.sp
+            h < 55.dp -> 16.sp
+            h < 65.dp -> 18.sp
+            h < 75.dp -> 20.sp
+            else -> 22.sp
+        }
+        val subFont = when {
+            h < 62.dp -> 9.2.sp
+            else -> 9.8.sp
+        }
+        val titleFont = 10.5.sp
+
         Box(
             Modifier
-                .fillMaxWidth()
-                .padding(vertical = 6.dp)
-                .background(dim.copy(alpha = 0.25f))
-                .size(height = 1.dp, width = 200.dp),
-        )
-
-        // 结果
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                .fillMaxSize()
+                .padding(horizontal = 12.dp, vertical = 5.dp),
+        ) {
+            // —— 左上：RESULT ——
             Text(
-                "= 结果", fontSize = titleSize, color = dim,
+                modifier = Modifier.align(Alignment.TopStart),
+                text = "RESULT",
+                fontSize = titleFont,
                 fontWeight = FontWeight.SemiBold,
+                color = primary,
             )
+
+            // —— 中部偏下靠右：十进制大字（底部保留 2.6 倍副显字高 + 3dp 避免与副显重叠/裁切）——
+            val subLinePad = when {
+                h < 62.dp -> 27.dp
+                else -> 30.dp
+            }
             Text(
-                text = state.bitResult.ifBlank { " " },
-                fontSize = resultSize, fontWeight = resultWeight,
-                color = bright,
-                maxLines = 1, overflow = TextOverflow.Visible,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(bottom = subLinePad),
+                text = decResultText,
+                fontSize = mainFont,
+                fontWeight = FontWeight.ExtraBold,
+                color = if (visible) bright else dim,
+                maxLines = 1,
+                overflow = TextOverflow.Visible,
+                softWrap = false,
             )
+
+            // —— 左下：副显示一行 OCT / HEX / BIN ——
+            if (visible) {
+                Text(
+                    modifier = Modifier.align(Alignment.BottomStart),
+                    text = formatOhb(v),
+                    fontSize = subFont,
+                    fontWeight = FontWeight.SemiBold,
+                    color = bright.copy(alpha = 0.72f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Clip,
+                    softWrap = false,
+                    letterSpacing = 0.2.sp,
+                )
+            } else {
+                Text(
+                    modifier = Modifier.align(Alignment.BottomStart),
+                    text = "OCT:    HEX:    BIN:",
+                    fontSize = subFont,
+                    color = Color.Transparent,
+                )
+            }
         }
     }
 }
@@ -614,13 +958,20 @@ private fun RadixKeypad(
     }
 }
 
-// --- 位运算按键（两数）---
+// --- 位运算按键（结构与进制转换相同：6 行 × 4 列固定 HEX 布局）---
 @Composable
 private fun BitwiseKeypad(
     state: ProgrammerModuleState,
     onIntent: (ModuleIntent) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // 固定 6 行 × 4 列，与进制转换键盘排布一致：
+    // Row1: A  B  C  ≪  (左移 SHL)
+    // Row2: D  E  F  ≫  (右移 SHR)
+    // Row3: 7  8  9  ∧  (AND)
+    // Row4: 4  5  6  ∨  (OR)
+    // Row5: 1  2  3  =  (执行求值)
+    // Row6: 0 AC ⌫  ±  (正负切换 / 清零 / 退格)
     val digitsForRadix: List<String> = when (state.bitRadix) {
         2 -> listOf("0", "1")
         8 -> listOf("0", "1", "2", "3", "4", "5", "6", "7")
@@ -629,87 +980,84 @@ private fun BitwiseKeypad(
                      "A", "B", "C", "D", "E", "F")
         else -> listOf("0", "1", "2", "3", "4", "5", "6", "7", "8", "9")
     }
-    val cap = 44.dp  // 位运算页面按钮上限更小，保证 8 行不重叠
 
-    Column(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        // 进制行（位运算也支持在不同进制下输入）
+    Column(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Row 1：A B C  <<
         KeypadRow(Modifier.fillMaxWidth().weight(1f)) {
-            RadixKey("BIN", isSelected = state.bitRadix == 2) {
-                onIntent(ModuleIntent.Custom("bit:radix:2"))
-            }
-            RadixKey("OCT", isSelected = state.bitRadix == 8) {
-                onIntent(ModuleIntent.Custom("bit:radix:8"))
-            }
-            RadixKey("DEC", isSelected = state.bitRadix == 10) {
-                onIntent(ModuleIntent.Custom("bit:radix:10"))
-            }
-            RadixKey("HEX", isSelected = state.bitRadix == 16) {
-                onIntent(ModuleIntent.Custom("bit:radix:16"))
+            BitwiseDigitOrDisabled("A", digitsForRadix, onIntent)
+            BitwiseDigitOrDisabled("B", digitsForRadix, onIntent)
+            BitwiseDigitOrDisabled("C", digitsForRadix, onIntent)
+            GlassKeyVariant("<<", ProgKeyVariant.Bitwise) {
+                onIntent(ModuleIntent.Custom("bit:op:SHL"))
             }
         }
 
-        // LHS / RHS 焦点切换 + 运算符
+        // Row 2：D E F  >>
         KeypadRow(Modifier.fillMaxWidth().weight(1f)) {
-            FocusTab("LHS", isActive = state.bitFocus == BitFocus.Lhs) {
-                onIntent(ModuleIntent.Custom("bit:focus:Lhs"))
+            BitwiseDigitOrDisabled("D", digitsForRadix, onIntent)
+            BitwiseDigitOrDisabled("E", digitsForRadix, onIntent)
+            BitwiseDigitOrDisabled("F", digitsForRadix, onIntent)
+            GlassKeyVariant(">>", ProgKeyVariant.Bitwise) {
+                onIntent(ModuleIntent.Custom("bit:op:SHR"))
             }
-            FocusTab("RHS", isActive = state.bitFocus == BitFocus.Rhs) {
-                onIntent(ModuleIntent.Custom("bit:focus:Rhs"))
-            }
-            GlassKeyVariant("AC", ProgKeyVariant.Clear, maxSize = cap) { onIntent(ModuleIntent.Clear) }
-            GlassKeyVariant("⌫", ProgKeyVariant.Clear, maxSize = cap) { onIntent(ModuleIntent.Backspace) }
         }
 
-        // 运算符行（AND / OR / XOR / <<）
+        // Row 3：7 8 9  &
         KeypadRow(Modifier.fillMaxWidth().weight(1f)) {
-            BitOpKey(BitOp.AND, state.bitOp, onIntent, maxSize = cap)
-            BitOpKey(BitOp.OR, state.bitOp, onIntent, maxSize = cap)
-            BitOpKey(BitOp.XOR, state.bitOp, onIntent, maxSize = cap)
-            BitOpKey(BitOp.SHL, state.bitOp, onIntent, maxSize = cap)
-        }
-
-        // 运算符行（>> / NOT 替代 / 其它操作 + =）
-        KeypadRow(Modifier.fillMaxWidth().weight(1f)) {
-            BitOpKey(BitOp.SHR, state.bitOp, onIntent, maxSize = cap)
-            GlassKeyVariant("NOT", ProgKeyVariant.Bitwise, maxSize = cap) {
-                onIntent(ModuleIntent.Custom("bit:unary:NOT"))
+            BitwiseDigitOrDisabled("7", digitsForRadix, onIntent)
+            BitwiseDigitOrDisabled("8", digitsForRadix, onIntent)
+            BitwiseDigitOrDisabled("9", digitsForRadix, onIntent)
+            GlassKeyVariant("&", ProgKeyVariant.Operator) {
+                onIntent(ModuleIntent.Custom("bit:op:AND"))
             }
-            GlassKeyVariant("±", ProgKeyVariant.Neutral, maxSize = cap) {
-                onIntent(ModuleIntent.Custom("bit:negate"))
+        }
+
+        // Row 4：4 5 6  |
+        KeypadRow(Modifier.fillMaxWidth().weight(1f)) {
+            BitwiseDigitOrDisabled("4", digitsForRadix, onIntent)
+            BitwiseDigitOrDisabled("5", digitsForRadix, onIntent)
+            BitwiseDigitOrDisabled("6", digitsForRadix, onIntent)
+            GlassKeyVariant("|", ProgKeyVariant.Operator) {
+                onIntent(ModuleIntent.Custom("bit:op:OR"))
             }
-            GlassKeyVariant("=", ProgKeyVariant.Equal, maxSize = cap) { onIntent(ModuleIntent.Evaluate) }
         }
 
-        // 数字块：7 8 9 + A(HEX)、4 5 6 + B(HEX)、1 2 3 + C(HEX)
+        // Row 5：1 2 3  =
         KeypadRow(Modifier.fillMaxWidth().weight(1f)) {
-            DigitKeyOrDisabled("7", digitsForRadix, onIntent, maxSize = cap)
-            DigitKeyOrDisabled("8", digitsForRadix, onIntent, maxSize = cap)
-            DigitKeyOrDisabled("9", digitsForRadix, onIntent, maxSize = cap)
-            HexLetterKeyOrDisabled("A", digitsForRadix, onIntent, maxSize = cap)
-        }
-        KeypadRow(Modifier.fillMaxWidth().weight(1f)) {
-            DigitKeyOrDisabled("4", digitsForRadix, onIntent, maxSize = cap)
-            DigitKeyOrDisabled("5", digitsForRadix, onIntent, maxSize = cap)
-            DigitKeyOrDisabled("6", digitsForRadix, onIntent, maxSize = cap)
-            HexLetterKeyOrDisabled("B", digitsForRadix, onIntent, maxSize = cap)
-        }
-        KeypadRow(Modifier.fillMaxWidth().weight(1f)) {
-            DigitKeyOrDisabled("1", digitsForRadix, onIntent, maxSize = cap)
-            DigitKeyOrDisabled("2", digitsForRadix, onIntent, maxSize = cap)
-            DigitKeyOrDisabled("3", digitsForRadix, onIntent, maxSize = cap)
-            HexLetterKeyOrDisabled("C", digitsForRadix, onIntent, maxSize = cap)
+            BitwiseDigitOrDisabled("1", digitsForRadix, onIntent)
+            BitwiseDigitOrDisabled("2", digitsForRadix, onIntent)
+            BitwiseDigitOrDisabled("3", digitsForRadix, onIntent)
+            GlassKeyVariant("=", ProgKeyVariant.Equal) { onIntent(ModuleIntent.Evaluate) }
         }
 
-        // 最后一行：0 + D E F(HEX)
+        // Row 6：0 AC ⌫  ±
         KeypadRow(Modifier.fillMaxWidth().weight(1f)) {
-            GlassKeyVariant("0", ProgKeyVariant.Default, maxSize = cap) {
+            GlassKeyVariant("0", ProgKeyVariant.Default) {
                 if ("0" in digitsForRadix) onIntent(ModuleIntent.Input("0"))
             }
-            HexLetterKeyOrDisabled("D", digitsForRadix, onIntent, maxSize = cap)
-            HexLetterKeyOrDisabled("E", digitsForRadix, onIntent, maxSize = cap)
-            HexLetterKeyOrDisabled("F", digitsForRadix, onIntent, maxSize = cap)
+            GlassKeyVariant("AC", ProgKeyVariant.Clear) { onIntent(ModuleIntent.Clear) }
+            GlassKeyVariant("⌫", ProgKeyVariant.Clear) { onIntent(ModuleIntent.Backspace) }
+            GlassKeyVariant("±", ProgKeyVariant.Neutral) {
+                onIntent(ModuleIntent.Custom("bit:negate"))
+            }
         }
     }
+}
+
+/** 位运算键盘下的数字/字母键：不合法字符 reducer 里会忽略，这里都彩色显示。 */
+@Composable
+private fun RowScope.BitwiseDigitOrDisabled(
+    label: String,
+    allowed: List<String>,
+    onIntent: (ModuleIntent) -> Unit,
+) {
+    GlassKeyVariant(
+        label = label,
+        variant = ProgKeyVariant.Default,
+        onClick = {
+            if (label in allowed) onIntent(ModuleIntent.Input(label))
+        },
+    )
 }
 
 // --- 玻璃按键卡片 ---
