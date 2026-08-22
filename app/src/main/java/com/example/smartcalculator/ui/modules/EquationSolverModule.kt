@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -51,6 +52,8 @@ import com.example.smartcalculator.ui.components.isDarkTheme
 import com.example.smartcalculator.ui.theme.PanelAppleDark
 import com.example.smartcalculator.ui.theme.ThemeColor
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.takeOrElse
+import androidx.compose.ui.layout.Layout
 
 // ============================================================
 //  子类型常量
@@ -262,12 +265,18 @@ private fun EquationSolverModuleState.evaluateSafe(): EquationSolverModuleState 
             SUB_POLY -> {
                 // 用户按"说明文档"约定顺序填系数（就是 root([c0 c1 c2 ... cn]) 里的顺序）。
                 // 每个格子支持分数 "a/b" 形式（a、b 可以是小数或负数），parseCellToDouble 会精确计算。
-                // 为了兼容"前导 0 填错了"的情况，先裁剪前导 0 再交给算法；
-                // 全 0 就报错；裁剪后只剩 1 个数（常数项），认为无解。
-                val parsedList = polyCoeffs.map { parseCellToDouble(it) }
-                val trimmed = parsedList.dropWhile { kotlin.math.abs(it) < 1e-12 }
+                // 【关键】用户"没填"的格子（空串）不代表"填了 0" —— 我们按"填到哪算到哪"：
+                //   先找最后一个有内容的格子，把它之后的空格子全部丢弃；
+                //   再裁剪前导 0（对应用户可能填错的首项 0）；
+                //   如果裁剪后只剩 1 个数（常数项），认为无解。
+                //   这样用户填 [1, 2, 1, □, □, □, □] 就是 ax²+bx+c，两个根，不会多出 4 个"0 解"。
+                val raw = polyCoeffs.map { parseCellToDouble(it) }
+                val cellFilled = polyCoeffs.map { s -> s.trim().isNotEmpty() && s.trim() != "-" && s.trim() != "." && s.trim() != "/" }
+                val lastFilledIdx = cellFilled.indexOfLast { it }
+                val usedCells = if (lastFilledIdx >= 0) raw.take(lastFilledIdx + 1) else emptyList()
+                val trimmed = usedCells.dropWhile { kotlin.math.abs(it) < 1e-12 }
                 val doubles = trimmed.ifEmpty { listOf(0.0) }
-                require(doubles.size >= 2) { "系数不足（至少 2 个非零有效系数，形如 roots([2 3]) 对应 2x + 3 = 0）" }
+                require(doubles.size >= 2) { "系数不足（至少 2 个有效系数，形如 1, 2, 1 —— 对应 x² + 2x + 1 = 0）" }
                 numericRoots(doubles.toDoubleArray())
                     .mapIndexed { i, root -> "  x${i + 1} = ${root.fmt()}" }
             }
@@ -631,37 +640,9 @@ private fun BoxScope.EquationSolverDisplay(
     val accent = ThemeColor.current
 
     Column(modifier = modifier.padding(16.dp)) {
-        // 顶部模式提示（一元多次：静态说明；多元一次：整行可点击弹出维度选择）
+        // 维度对话框（多元一次点击顶部提示弹的）
         val showDimDialog = remember { androidx.compose.runtime.mutableStateOf(false) }
         val titleShape = RoundedCornerShape(10.dp)
-
-        if (state.subType == SUB_POLY) {
-            Text(
-                text = "一元多次 · 固定 7 格（x⁶ → x⁰，最高 6 次）  >> roots([c₀ c₁ … c₆])  想输几个就输几个",
-                style = MaterialTheme.typography.labelSmall,
-                color = LocalContentColor.current.copy(alpha = 0.5f),
-            )
-        } else {
-            Box(
-                modifier = Modifier
-                    .clip(titleShape)
-                    .background(accent.copy(alpha = 0.08f))
-                    .clickable(
-                        indication = null,
-                        interactionSource = remember { MutableInteractionSource() },
-                        onClick = { showDimDialog.value = true },
-                    )
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-            ) {
-                Text(
-                    text = "多元一次 · 当前 ${state.linearDim} 元（点这里调 2~6 元）  >> x = A \\ b",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = LocalContentColor.current.copy(alpha = 0.65f),
-                )
-            }
-        }
-        Spacer(modifier = Modifier.height(10.dp))
-
         if (state.subType == SUB_LINEAR) {
             DimDialog(
                 state = state,
@@ -699,7 +680,7 @@ private fun BoxScope.EquationSolverDisplay(
                     drawLine(top, Offset(radiusPx * 0.5f, 0.5f), Offset(w - radiusPx * 0.5f, 0.5f), 1f)
                     drawLine(bot, Offset(radiusPx * 0.5f, h - 0.5f), Offset(w - radiusPx * 0.5f, h - 0.5f), 1f)
                 }
-                .padding(16.dp),
+                .padding(horizontal = 10.dp, vertical = 14.dp),
         ) {
             Column {
                 // ===== 命令行编辑器区 =====
@@ -779,13 +760,96 @@ private fun BoxScope.EquationSolverDisplay(
                 }
             }
         }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        // ===== 模式提示（放在显示屏外面的下面） =====
+        if (state.subType == SUB_POLY) {
+            Text(
+                text = "一元多次 · 共 7 格（x⁶ → x⁰，填到哪算到哪，最高 6 次）",
+                style = MaterialTheme.typography.labelSmall,
+                color = LocalContentColor.current.copy(alpha = 0.5f),
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .clip(titleShape)
+                    .background(accent.copy(alpha = 0.08f))
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                        onClick = { showDimDialog.value = true },
+                    )
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+            ) {
+                Text(
+                    text = "多元一次 · 当前 ${state.linearDim} 元（点这里调 2~6 元）  >> x = A \\ b",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = LocalContentColor.current.copy(alpha = 0.65f),
+                )
+            }
+        }
     }
 }
 
 /** 当前系统等宽字体（缺失则不设置，用 Material 默认 monospace） */
 private fun monoFont(): androidx.compose.ui.text.font.FontFamily? = null
 
-/** 一元多次编辑器：单行 roots([c₀ c₁ c₂ … cn]) */
+/** 流式换行布局：每个子项宽度自行决定；一行装不下的自动换下一行（类似 CSS flex-wrap） */
+@Composable
+private fun WrapRow(
+    modifier: Modifier = Modifier,
+    horizontalGap: Dp = 6.dp,
+    verticalGap: Dp = 8.dp,
+    content: @Composable () -> Unit,
+) {
+    Layout(
+        content = content,
+        modifier = modifier,
+    ) { measurables, constraints ->
+        val maxWidth = constraints.maxWidth
+        val hGapPx = horizontalGap.roundToPx()
+        val vGapPx = verticalGap.roundToPx()
+
+        val placeables = measurables.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
+
+        val rows = mutableListOf<List<androidx.compose.ui.layout.Placeable>>()
+        val rowHeights = mutableListOf<Int>()
+        var currentRow = mutableListOf<androidx.compose.ui.layout.Placeable>()
+        var currentWidth = 0
+        var currentRowHeight = 0
+
+        for (p in placeables) {
+            val w = p.width
+            val need = if (currentRow.isEmpty()) w else currentWidth + hGapPx + w
+            if (need <= maxWidth) {
+                currentRow.add(p)
+                currentWidth = need
+                if (p.height > currentRowHeight) currentRowHeight = p.height
+            } else {
+                if (currentRow.isNotEmpty()) { rows.add(currentRow); rowHeights.add(currentRowHeight) }
+                currentRow = mutableListOf(p)
+                currentWidth = w
+                currentRowHeight = p.height
+            }
+        }
+        if (currentRow.isNotEmpty()) { rows.add(currentRow); rowHeights.add(currentRowHeight) }
+
+        val totalHeight = rowHeights.sum() + vGapPx * (rowHeights.size - 1).coerceAtLeast(0)
+        layout(maxWidth, totalHeight.coerceAtLeast(constraints.minHeight)) {
+            var y = 0
+            rows.forEachIndexed { ri, row ->
+                var x = 0
+                row.forEach { p ->
+                    p.placeRelative(x, y)
+                    x += p.width + hGapPx
+                }
+                y += rowHeights[ri] + vGapPx
+            }
+        }
+    }
+}
+
+/** 系数编辑器行：流式换行 — 方框随内容变宽；一行不够就自动换行 */
 @Composable
 private fun PolyEditorLine(
     coeffs: List<String>,
@@ -795,74 +859,92 @@ private fun PolyEditorLine(
     commentColor: Color,
     onClickIdx: (Int) -> Unit,
 ) {
-    Row(
+    WrapRow(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Start,
+        horizontalGap = 6.dp,
+        verticalGap = 8.dp,
     ) {
-        // 提示符
-        Text(
-            text = ">> ",
-            color = promptColor,
-            fontFamily = monoFont(),
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        // func
-        Text(
-            text = "roots(",
-            color = promptColor,
-            fontFamily = monoFont(),
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        Text(
-            text = "[",
-            color = commentColor,
-            fontFamily = monoFont(),
-            style = MaterialTheme.typography.bodyLarge,
-        )
         coeffs.forEachIndexed { i, c ->
-            // 每个系数是一个可点的 token
             val active = i == activeIdx
-            val displayText = c.ifEmpty { "□" }
-            val tokenColor = when {
-                active -> Color.White
-                c.isEmpty() -> commentColor
+            val isEmpty = c.isEmpty()
+            val textColor = when {
+                active && !isEmpty -> Color.White
+                isEmpty -> Color.Transparent
                 else -> LocalContentColor.current
             }
-            val tokenBg = if (active) accent else Color.Transparent
-            val tokenShape = RoundedCornerShape(6.dp)
-            Box(
-                modifier = Modifier
+            val tokenShape = RoundedCornerShape(10.dp)
+            // 空格子：给一个最小的方形容量；有内容时完全 wrap 住文字（随文字变长 = 方框变长）
+            val sizeGuard = if (isEmpty) {
+                Modifier.sizeIn(minWidth = 42.dp, minHeight = 42.dp)
+            } else {
+                Modifier.sizeIn(minWidth = 42.dp, minHeight = 42.dp)
+            }
+            val layerModifier = if (isEmpty) {
+                Modifier
+                    .border(
+                        width = 1.3.dp,
+                        color = if (active) accent else commentColor.copy(alpha = 0.4f),
+                        shape = tokenShape,
+                    )
                     .clip(tokenShape)
-                    .background(tokenBg)
+                    .then(sizeGuard)
+            } else {
+                Modifier
+                    .shadow(
+                        elevation = 6.dp,
+                        shape = tokenShape,
+                        ambientColor = accent.copy(alpha = 0.08f),
+                        spotColor = Color.Black.copy(alpha = 0.05f),
+                        clip = false,
+                    )
+                    .clip(tokenShape)
+                    .background(
+                        brush = Brush.verticalGradient(
+                            colors = if (active) listOf(accent, accent) else listOf(
+                                Color.White.copy(alpha = 0.8f),
+                                Color.White.copy(alpha = 0.55f),
+                            ),
+                        ),
+                        shape = tokenShape,
+                    )
+                    .border(
+                        width = 0.8.dp,
+                        color = Color.White.copy(alpha = 0.55f),
+                        shape = tokenShape,
+                    )
+                    .then(sizeGuard)
+            }
+            Box(
+                modifier = layerModifier
                     .clickable(
                         indication = null,
                         interactionSource = remember { MutableInteractionSource() },
                         onClick = { onClickIdx(i) },
                     )
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center,
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (active) BlinkingCursor(accent = accent, isBefore = true)
-                    Text(
-                        text = displayText,
-                        color = tokenColor,
-                        fontFamily = monoFont(),
-                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                    )
-                    if (active) BlinkingCursor(accent = accent, isBefore = false)
+                if (isEmpty) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (active) BlinkingCursor(accent = accent, isBefore = true)
+                        if (active) BlinkingCursor(accent = accent, isBefore = false)
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (active) BlinkingCursor(accent = Color.White, isBefore = true)
+                        Text(
+                            text = c,
+                            color = textColor,
+                            fontFamily = monoFont(),
+                            softWrap = false,
+                            maxLines = 1,
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                        )
+                        if (active) BlinkingCursor(accent = Color.White, isBefore = false)
+                    }
                 }
             }
-            if (i < coeffs.lastIndex) {
-                Spacer(modifier = Modifier.width(6.dp))
-            }
         }
-        Text(
-            text = "])",
-            color = commentColor,
-            fontFamily = monoFont(),
-            style = MaterialTheme.typography.bodyLarge,
-        )
     }
 }
 
