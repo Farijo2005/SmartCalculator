@@ -151,6 +151,13 @@ class CalculatorViewModel(application: Application) : AndroidViewModel(applicati
                         )
                     } else s.copy(moduleStates = states)
                 }
+                CalcMode.Programmer -> {
+                    val old = states[mode] as? com.example.smartcalculator.ui.modules.ProgrammerModuleState
+                        ?: com.example.smartcalculator.ui.modules.ProgrammerModuleState()
+                    val newState = com.example.smartcalculator.ui.modules.reduceProgrammer(old, intent)
+                    states[mode] = newState
+                    s.copy(moduleStates = states)
+                }
                 else -> s
             }
         }
