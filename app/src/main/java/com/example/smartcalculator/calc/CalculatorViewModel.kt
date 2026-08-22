@@ -121,7 +121,8 @@ class CalculatorViewModel(application: Application) : AndroidViewModel(applicati
     fun onModuleIntent(mode: CalcMode, intent: ModuleIntent) {
         when (mode) {
             CalcMode.Standard -> reduceStandard(intent)
-            else -> { /* 其他模块接入时实现各自 reducer */ }
+            // 其他模块（解方程等）统一走 dispatchModuleIntent 按模块 reducer 分发
+            else -> dispatchModuleIntent(mode, intent)
         }
     }
 

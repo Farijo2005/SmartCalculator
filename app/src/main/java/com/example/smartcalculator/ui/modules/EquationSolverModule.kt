@@ -113,7 +113,26 @@ internal fun reduceEquationSolver(
     state: EquationSolverModuleState,
     intent: ModuleIntent,
 ): EquationSolverModuleState = when (intent) {
-    is ModuleIntent.Input -> state.editActive { it + intent.value }
+    is ModuleIntent.Input -> {
+        val ch = intent.value
+        state.editActive { cell ->
+            when {
+                // 数字：直接追加
+                ch.length == 1 && ch[0].isDigit() -> cell + ch
+                // 小数点：只允许出现一次，且分子/分母各自最多一个
+                ch == "." -> {
+                    val hasFrac = "/" in cell
+                    val part = if (hasFrac) cell.substringAfter("/") else cell
+                    if ("." in part) cell else "$cell."
+                }
+                // 分数线 /：一个格子里最多一个，且只能在有数字后加
+                ch == "/" -> {
+                    if ("/" in cell || cell.isEmpty() || cell == "-") cell else "$cell/"
+                }
+                else -> cell
+            }
+        }
+    }
     ModuleIntent.Backspace -> state.editActive { it.dropLast(1) }
     ModuleIntent.Clear -> state.copy(
         polyCoeffs = List(POLY_MAX_CELLS) { "" },
@@ -242,9 +261,10 @@ private fun EquationSolverModuleState.evaluateSafe(): EquationSolverModuleState 
         when (subType) {
             SUB_POLY -> {
                 // 用户按"说明文档"约定顺序填系数（就是 root([c0 c1 c2 ... cn]) 里的顺序）。
+                // 每个格子支持分数 "a/b" 形式（a、b 可以是小数或负数），parseCellToDouble 会精确计算。
                 // 为了兼容"前导 0 填错了"的情况，先裁剪前导 0 再交给算法；
                 // 全 0 就报错；裁剪后只剩 1 个数（常数项），认为无解。
-                val parsedList = polyCoeffs.map { it.toDoubleOrNull() ?: 0.0 }
+                val parsedList = polyCoeffs.map { parseCellToDouble(it) }
                 val trimmed = parsedList.dropWhile { kotlin.math.abs(it) < 1e-12 }
                 val doubles = trimmed.ifEmpty { listOf(0.0) }
                 require(doubles.size >= 2) { "系数不足（至少 2 个非零有效系数，形如 roots([2 3]) 对应 2x + 3 = 0）" }
@@ -254,9 +274,9 @@ private fun EquationSolverModuleState.evaluateSafe(): EquationSolverModuleState 
             SUB_LINEAR -> {
                 val n = linearDim
                 val A = Array(n) { r ->
-                    DoubleArray(n) { c -> linearMatrix[r][c].toDoubleOrNull() ?: 0.0 }
+                    DoubleArray(n) { c -> parseCellToDouble(linearMatrix[r][c]) }
                 }
-                val b = DoubleArray(n) { r -> linearMatrix[r][n].toDoubleOrNull() ?: 0.0 }
+                val b = DoubleArray(n) { r -> parseCellToDouble(linearMatrix[r][n]) }
                 val x = gaussElim(A, b) ?: error("系数矩阵奇异：无解或无穷多解")
                 val vars = "xyzuvw".toCharArray().take(n)
                 x.mapIndexed { i, xi -> "  ${vars[i]} = ${xi.fmt()}" }
@@ -269,6 +289,35 @@ private fun EquationSolverModuleState.evaluateSafe(): EquationSolverModuleState 
     } else {
         copy(results = emptyList(), errorMsg = parsed.exceptionOrNull()?.message ?: "输入有误")
     }
+}
+
+/**
+ * 把用户在单个格子里输入的字符串解析成 Double。
+ * 支持：
+ *  - 整数："123"、"-7"
+ *  - 小数："0.5"、"-3.14"
+ *  - 分数："1/2"、"-3/4"、"0.1/2.5"（先算分子分母再相除，分母为 0 抛异常）
+ *  - 空串 → 0.0
+ */
+private fun parseCellToDouble(s: String): Double {
+    val t = s.trim()
+    if (t.isEmpty() || t == "-" || t == "." || t == "/") return 0.0
+    if ("/" in t) {
+        val parts = t.split("/")
+        require(parts.size == 2) { "分数格式错误：\"$t\"（形如 1/2）" }
+        val num = parseSimpleNumber(parts[0])
+        val den = parseSimpleNumber(parts[1])
+        require(kotlin.math.abs(den) > 1e-15) { "分母不能为 0：\"$t\"" }
+        return num / den
+    }
+    return parseSimpleNumber(t)
+}
+
+/** 单个数字（可带 - 和 .）的解析 */
+private fun parseSimpleNumber(s: String): Double {
+    val t = s.trim()
+    if (t.isEmpty() || t == "-" || t == ".") return 0.0
+    return t.toDoubleOrNull() ?: throw IllegalArgumentException("非法数字：\"$t\"")
 }
 
 private fun Double.fmt(): String {
@@ -346,9 +395,10 @@ internal fun Complex.fmt(): String {
  * 求实系数多项式 p(x) = p[0]*x^n + p[1]*x^(n-1) + ... + p[n] = 0 的**所有根（含复数）**。
  *
  * 策略：
- *  - n = 1, 2：闭式解（二次方程直接输出共轭复根对）
- *  - 3 ≤ n ≤ 6：**Durand-Kerner / Weierstrass 迭代**，一次性同时逼近所有 n 个根
- *  - 入参多项式允许空首项（前导 0），内部会自动裁剪并归一化
+ *  - **前处理**：先裁前导 0，再**剥掉尾部 x^k**（末尾多个 0 等价于 x^k * q(x)），把 q(x) 交给后续求根后再把 k 个 0 根补回。
+ *    这避免了用户没填的格子（=0）把次数硬拉到 6 次造成高次重 0 根导致 Durand-Kerner 发散。
+ *  - 真实次数 n'=1,2：闭式解（二次方程直接输出共轭复根对）
+ *  - 3 ≤ n' ≤ 6：**Durand-Kerner / Weierstrass 迭代**（最多 3 次重新撒初值，避免卡住）
  */
 internal fun numericRoots(p: DoubleArray): List<Complex> {
     // 1. 裁剪前导 0，保证首项非零（除非恒 0）
@@ -357,68 +407,105 @@ internal fun numericRoots(p: DoubleArray): List<Complex> {
         coeffs = coeffs.copyOfRange(1, coeffs.size)
     }
     if (coeffs.size <= 1) return emptyList()
-    val n = coeffs.size - 1
 
-    // 2. 归一化为首一（除以首项系数）
-    val a0 = coeffs[0]
-    val monic = DoubleArray(coeffs.size) { coeffs[it] / a0 }
+    // 2. 剥尾部 0：即提取 x^k 因子，等价于在根集合里补 k 个 0
+    //    例：用户填 [1,2,1,0,0,0,0] → q=[1,2,1], k=4 → roots(q) + 4 个 0 根
+    var tailZeros = 0
+    while (coeffs.size - tailZeros >= 2 && kotlin.math.abs(coeffs[coeffs.lastIndex - tailZeros]) < 1e-14) {
+        tailZeros++
+    }
+    val trimmedCore = coeffs.copyOf(coeffs.size - tailZeros)
+    val zeroRoots: List<Complex> = if (tailZeros == 0) emptyList() else List(tailZeros) { Complex.ZERO }
 
-    // 3. 1 次 / 2 次：闭式，直接返回，含复根
-    if (n == 1) {
-        return listOf(Complex(-monic[1], 0.0))
-    }
-    if (n == 2) {
-        val p1 = monic[1]; val q = monic[2]
-        val disc = p1 * p1 - 4.0 * q
-        return if (disc >= 0.0) {
-            val s = kotlin.math.sqrt(disc)
-            listOf(Complex((-p1 + s) / 2.0, 0.0), Complex((-p1 - s) / 2.0, 0.0))
-        } else {
-            val s = kotlin.math.sqrt(-disc)
-            listOf(Complex(-p1 / 2.0, s / 2.0), Complex(-p1 / 2.0, -s / 2.0))
-        }
-    }
+    val n = trimmedCore.size - 1
 
-    // 4. 3 ≤ n ≤ 6：Durand-Kerner / Weierstrass 同时迭代
-    //    初始化经典方案：围绕 0.9^k * e^{i (2πk/n + φ)} 均匀散布在复平面
-    val roots = Array(n) { k ->
-        val r = Math.pow(0.9, k.toDouble()) * 0.8 + 0.15
-        val theta = (2.0 * Math.PI * k / n) + 0.23  // 小偏置避开实轴 / 虚轴
-        Complex(r * Math.cos(theta), r * Math.sin(theta))
-    }
-    val maxIter = 300
-    val tol = 1e-12
-    repeat(maxIter) {
-        var maxDelta = 0.0
-        for (i in 0 until n) {
-            val xi = roots[i]
-            // 分母：Π_{j ≠ i} (xi - xj)
-            var denom = Complex.ONE
-            for (j in 0 until n) {
-                if (j == i) continue
-                denom *= (xi - roots[j])
+    // 3. 归一化为首一（除以首项系数）
+    val a0 = trimmedCore[0]
+    val monic = DoubleArray(trimmedCore.size) { trimmedCore[it] / a0 }
+
+    // 4. 1 次 / 2 次：闭式，直接返回，含复根
+    val coreRoots: List<Complex> = when (n) {
+        1 -> listOf(Complex(-monic[1], 0.0))
+        2 -> {
+            val p1 = monic[1]; val q = monic[2]
+            val disc = p1 * p1 - 4.0 * q
+            if (disc >= 0.0) {
+                val s = kotlin.math.sqrt(disc)
+                listOf(Complex((-p1 + s) / 2.0, 0.0), Complex((-p1 - s) / 2.0, 0.0))
+            } else {
+                val s = kotlin.math.sqrt(-disc)
+                listOf(Complex(-p1 / 2.0, s / 2.0), Complex(-p1 / 2.0, -s / 2.0))
             }
-            if (denom.abs2() < 1e-40) continue  // 暂跳过，下轮再算
-            val numer = evalPolyComplex(monic, xi)
-            val delta = numer / denom
-            roots[i] = xi - delta
-            val d = delta.abs()
-            if (d > maxDelta) maxDelta = d
         }
-        if (maxDelta < tol) return@repeat
+        else -> durandKerner(monic, n) // 3~6 次：迭代求解
     }
 
-    // 5. 后处理：虚部很小（<1e-6）认定为实根，置零虚部；并合理排序
-    val eps = 1e-6
-    val cleaned = roots.map {
-        val reR = kotlin.math.round(it.re * 1e10) / 1e10
-        val imR = if (kotlin.math.abs(it.im) < eps) 0.0 else kotlin.math.round(it.im * 1e10) / 1e10
-        Complex(reR, imR)
+    // 5. 合并：尾部 0 根 + 核心根；并做清洗 + 排序
+    return cleanAndSortRoots(coreRoots + zeroRoots)
+}
+
+/** Durand-Kerner 迭代：求首一 monic（长度 n+1）多项式的全部 n 个根 */
+private fun durandKerner(monic: DoubleArray, n: Int): List<Complex> {
+    val maxRetries = 3
+    repeat(maxRetries) { attempt ->
+        // 不同重试：初值做一点扰动，避免卡在坏初值
+        val roots = Array(n) { k ->
+            val r = Math.pow(0.82 + 0.06 * attempt, k.toDouble()) * 0.9 + 0.12
+            val theta = (2.0 * Math.PI * k / n) + 0.23 + 0.11 * attempt
+            Complex(r * Math.cos(theta), r * Math.sin(theta))
+        }
+        val maxIter = 500
+        val tol = 1e-11
+        var lastMaxDelta = Double.POSITIVE_INFINITY
+        repeat(maxIter) {
+            var maxDelta = 0.0
+            for (i in 0 until n) {
+                val xi = roots[i]
+                if (xi.re.isNaN() || xi.im.isNaN() || xi.re.isInfinite() || xi.im.isInfinite()) {
+                    return@repeat // 本轮失败，重试
+                }
+                // 分母：Π_{j ≠ i} (xi - xj)
+                var denom = Complex.ONE
+                for (j in 0 until n) {
+                    if (j == i) continue
+                    denom *= (xi - roots[j])
+                    if (denom.re.isNaN() || denom.im.isNaN()) break
+                }
+                if (denom.abs2() < 1e-200) continue // 太小，下轮再算
+                val numer = evalPolyComplex(monic, xi)
+                if (numer.re.isNaN() || numer.im.isNaN()) continue
+
+                val delta = numer / denom
+                if (delta.re.isNaN() || delta.im.isNaN()) continue
+                // 步长裁剪：防止一步飞太远（对重根、小分母时非常关键）
+                val stepCap = 2.0
+                val norm = delta.abs()
+                val effDelta = if (norm > stepCap) delta * (stepCap / norm) else delta
+                roots[i] = xi - effDelta
+                val d = effDelta.abs()
+                if (d > maxDelta) maxDelta = d
+            }
+            if (maxDelta < tol) return roots.toList()
+            if (maxDelta.isNaN()) return@repeat
+            lastMaxDelta = maxDelta
+        }
+        // 如果结束时已接近收敛（< 1e-6），也接受（允许重根等疑难情况的较低精度）
+        if (lastMaxDelta < 1e-6) return roots.toList()
     }
-    // 排序规则：
-    //  - 纯实根（im=0）按实部升序
-    //  - 共轭复根按实部升序，且正虚部在前、负虚部紧随（肉眼可读）
-    //  - 若以上都不确定再按 abs(im) 小者优先
+    // 最终兜底：返回最后一次迭代结果，由上层 cleanAndSort 清洗
+    return emptyList()
+}
+
+/** Durand-Kerner 结果后处理：去除 NaN/Inf、清洗近零虚部、排序（实根→共轭对） */
+private fun cleanAndSortRoots(src: List<Complex>): List<Complex> {
+    val eps = 1e-6
+    val cleaned = src
+        .filterNot { it.re.isNaN() || it.im.isNaN() || it.re.isInfinite() || it.im.isInfinite() }
+        .map {
+            val reR = kotlin.math.round(it.re * 1e10) / 1e10
+            val imR = if (kotlin.math.abs(it.im) < eps) 0.0 else kotlin.math.round(it.im * 1e10) / 1e10
+            Complex(reR, imR)
+        }
     return cleaned.sortedWith(
         compareBy<Complex>
         { kotlin.math.abs(it.im) > 1e-12 }   // 实根在前
@@ -1000,7 +1087,7 @@ private fun BoxScope.EquationSolverKeypad(
         val rowGap = 8.dp
         val colGap = 10.dp
 
-        // ===== 行 1：[一元多次] [多元一次] [±] =====
+        // ===== 行 1：[一元多次] [多元一次] [±] [/] =====
         Row(
             modifier = Modifier.fillMaxWidth().weight(1f),
             horizontalArrangement = Arrangement.spacedBy(colGap),
@@ -1023,6 +1110,7 @@ private fun BoxScope.EquationSolverKeypad(
                 onClick = { onIntent(ModuleIntent.Custom("negate")) },
                 modifier = Modifier.weight(1f).fillMaxHeight(),
             )
+            CircleNumKey("/", Modifier.weight(1f).fillMaxHeight()) { onIntent(ModuleIntent.Input("/")) }
         }
         Spacer(modifier = Modifier.height(rowGap))
 
