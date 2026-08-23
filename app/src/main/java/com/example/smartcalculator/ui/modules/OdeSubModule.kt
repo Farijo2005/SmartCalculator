@@ -224,8 +224,8 @@ private fun OdeLayout(
         }
     } else {
         Column(modifier = modifier.fillMaxSize()) {
-            OdeGlassCard(Modifier.fillMaxWidth().weight(0.40f), display)
-            OdeGlassCard(Modifier.fillMaxWidth().weight(0.60f).padding(top = 16.dp), keypad)
+            OdeGlassCard(Modifier.fillMaxWidth().weight(0.34f), display)
+            OdeGlassCard(Modifier.fillMaxWidth().weight(0.66f).padding(top = 16.dp), keypad)
         }
     }
 }
@@ -711,70 +711,73 @@ private fun RowScope.OdeKey(
     variant: OdeVar = OdeVar.Default,
     onClick: () -> Unit,
 ) {
-    BoxWithConstraints(
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale = if (pressed) 0.94f else 1f
+    val dark = isDarkTheme()
+    val disabled = variant == OdeVar.Disabled
+    val primary = MaterialTheme.colorScheme.primary
+    val clearColor = if (dark) Color(0xFFFF6B6B) else Color(0xFFE53935)
+    val content = LocalContentColor.current
+
+    val (bg, border, fg) = when (variant) {
+        OdeVar.Equal -> Triple(
+            primary.copy(alpha = if (disabled) 0.3f else 1f),
+            primary.copy(alpha = if (disabled) 0.4f else 0.85f),
+            Color.White,
+        )
+        OdeVar.Clear -> Triple(
+            clearColor.copy(alpha = if (pressed) (if (dark) 0.35f else 0.50f) else (if (dark) 0.16f else 0.18f)),
+            clearColor.copy(alpha = if (dark) 0.40f else 0.50f),
+            clearColor.copy(alpha = if (disabled) 0.25f else 1f),
+        )
+        OdeVar.Operator -> Triple(
+            primary.copy(alpha = if (pressed) (if (dark) 0.35f else 0.50f) else (if (dark) 0.18f else 0.22f)),
+            primary.copy(alpha = if (dark) 0.40f else 0.50f),
+            primary.copy(alpha = if (disabled) 0.25f else 1f),
+        )
+        OdeVar.Disabled -> Triple(
+            Color.White.copy(alpha = if (dark) 0.05f else 0.06f),
+            Color.White.copy(alpha = 0.10f),
+            content.copy(alpha = 0.25f),
+        )
+        else -> Triple(
+            Color.White.copy(alpha = if (pressed) (if (dark) 0.25f else 0.35f) else (if (dark) 0.08f else 0.10f)),
+            Color.White.copy(alpha = if (dark) 0.14f else 0.20f),
+            content.copy(alpha = if (disabled) 0.25f else 0.95f),
+        )
+    }
+
+    val baseFont = when {
+        label.length >= 3 -> 14.sp
+        label.length == 2 -> 15.sp
+        else -> 19.sp
+    }
+    val weight = if (label.length >= 2) FontWeight.SemiBold else FontWeight.Medium
+
+    val safeOnClick: () -> Unit = { if (!disabled) onClick() }
+
+    Box(
         modifier = Modifier
             .weight(1f)
-            .aspectRatio(1f),
+            .fillMaxSize()
+            .scale(scale)
+            .clip(RoundedCornerShape(14.dp))
+            .background(bg)
+            .border(1.dp, border, RoundedCornerShape(14.dp))
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = safeOnClick,
+            ),
         contentAlignment = Alignment.Center,
     ) {
-        val cap = 52.dp
-        val available = minOf(maxWidth, maxHeight)
-        val size = minOf(cap, available)
-        val disabled = variant == OdeVar.Disabled
-        val safeOnClick: () -> Unit = { if (!disabled) onClick() }
-
-        when (variant) {
-            OdeVar.Equal -> EqualShell(size) {
-                GlassCircleButton(size = size, onClick = safeOnClick) {
-                    Text(label, fontSize = 18.sp, fontWeight = FontWeight.Bold,
-                         color = Color.White, textAlign = TextAlign.Center)
-                }
-            }
-            OdeVar.Disabled -> {
-                GlassCircleButton(size = size, onClick = {}) {}
-            }
-            else -> {
-                val color = when (variant) {
-                    OdeVar.Clear    -> if (isDarkTheme()) Color(0xFFFF6B6B) else Color(0xFFE53935)
-                    OdeVar.Operator -> MaterialTheme.colorScheme.primary
-                    else            -> LocalContentColor.current
-                }.copy(alpha = if (disabled) 0.25f else 1f)
-                val weight = if (label.length >= 2) FontWeight.SemiBold else FontWeight.Medium
-                val shrink = if (size <= 42.dp) 0.88f else 1f
-                val baseFont = when {
-                    label.length >= 3 -> 12.sp
-                    label.length == 2 -> 14.sp
-                    else -> 18.sp
-                }
-                val fontSize = (baseFont.value * shrink).sp
-                GlassCircleButton(size = size, onClick = safeOnClick) {
-                    CompositionLocalProvider(LocalContentColor provides color) {
-                        Text(label, fontSize = fontSize, fontWeight = weight,
-                             textAlign = TextAlign.Center)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EqualShell(
-    maxSize: Dp = 52.dp,
-    content: @Composable BoxScope.() -> Unit,
-) {
-    val primary = MaterialTheme.colorScheme.primary
-    BoxWithConstraints(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center,
-    ) {
-        val s = minOf(maxSize, minOf(maxWidth, maxHeight))
-        Box(
-            modifier = Modifier
-                .size(s)
-                .clip(RoundedCornerShape(50))
-                .background(primary),
-            contentAlignment = Alignment.Center,
-        ) { content() }
+        Text(
+            label,
+            fontSize = baseFont,
+            fontWeight = weight,
+            color = fg,
+            textAlign = TextAlign.Center,
+        )
     }
 }
