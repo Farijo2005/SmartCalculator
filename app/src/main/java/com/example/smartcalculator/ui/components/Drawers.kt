@@ -195,6 +195,8 @@ fun ModeDrawer(
     onPickMode: (CalcMode) -> Unit,
     onAbout: () -> Unit,
     modifier: Modifier = Modifier,
+    matlabActiveSubModule: String = "",
+    onPickSubModule: (String) -> Unit = {},
 ) {
     // MATLAB 集二级子菜单展开状态（独立记忆，不影响其他模块）
     var matlabExpanded by rememberSaveable { mutableStateOf(false) }
@@ -273,7 +275,10 @@ fun ModeDrawer(
                     ) {
                         // 二级子菜单独立在 modules/MatlabSetSubMenu.kt 中维护
                         // 兄弟独立修改，不需要触碰本共享文件
-                        MatlabSetSubMenu()
+                        MatlabSetSubMenu(
+                            activeSubModule = matlabActiveSubModule,
+                            onSubModulePick = onPickSubModule,
+                        )
                     }
                 }
             }

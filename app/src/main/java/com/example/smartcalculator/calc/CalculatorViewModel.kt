@@ -158,6 +158,13 @@ class CalculatorViewModel(application: Application) : AndroidViewModel(applicati
                     states[mode] = newState
                     s.copy(moduleStates = states)
                 }
+                CalcMode.MatlabSet -> {
+                    val old = states[mode] as? com.example.smartcalculator.ui.modules.MatlabSetModuleState
+                        ?: com.example.smartcalculator.ui.modules.MatlabSetModuleState()
+                    val newState = com.example.smartcalculator.ui.modules.reduceMatlabSet(old, intent)
+                    states[mode] = newState
+                    s.copy(moduleStates = states)
+                }
                 else -> s
             }
         }

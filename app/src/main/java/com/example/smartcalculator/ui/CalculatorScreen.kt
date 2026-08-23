@@ -31,6 +31,7 @@ import com.example.smartcalculator.ui.components.SettingsDrawer
 import com.example.smartcalculator.ui.components.isDarkTheme
 import com.example.smartcalculator.ui.modules.ModuleIntent
 import com.example.smartcalculator.ui.modules.ModuleRouter
+import com.example.smartcalculator.ui.modules.MatlabSetModuleState
 import com.example.smartcalculator.ui.theme.Background200
 import com.example.smartcalculator.ui.theme.BackgroundAppleDark
 import com.example.smartcalculator.ui.theme.ThemeMode
@@ -89,6 +90,16 @@ fun CalculatorScreen(
                     onModuleIntent = { intent ->
                         viewModel.onModuleIntent(state.mode, intent)
                     },
+                    onPickSubModule = { subId ->
+                        // 先记录激活的子模块（用 MATLAB 集模式，而非当前 state.mode）
+                        viewModel.onModuleIntent(
+                            CalcMode.MatlabSet,
+                            ModuleIntent.Custom("subModule", subId),
+                        )
+                        // 再切到 MATLAB 集模式并关闭抽屉
+                        viewModel.setMode(CalcMode.MatlabSet)
+                        onCloseDrawers()
+                    },
                 )
             }
 
@@ -117,6 +128,7 @@ private data class SharedCallbacks(
     val onSetThemeMode: (ThemeMode) -> Unit,
     val onSetThemeColor: (Color) -> Unit,
     val onModuleIntent: (ModuleIntent) -> Unit,
+    val onPickSubModule: (String) -> Unit,
 )
 
 @Composable
@@ -193,6 +205,9 @@ private fun androidx.compose.foundation.layout.BoxScope.DrawersLayer(
         onPickMode = cb.onPickMode,
         onAbout = onAbout,
         modifier = Modifier.align(Alignment.TopStart).padding(start = 12.dp, top = 108.dp),
+        matlabActiveSubModule = (state.moduleStates[CalcMode.MatlabSet] as? MatlabSetModuleState)
+            ?.activeSubModule ?: "",
+        onPickSubModule = cb.onPickSubModule,
     )
     // 历史记录抽屉：同左
     HistoryDrawer(
