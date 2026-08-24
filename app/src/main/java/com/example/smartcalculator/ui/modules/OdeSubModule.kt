@@ -772,12 +772,22 @@ private fun RowScope.OdeKey(
             primary.copy(alpha = if (disabled) 0.25f else 1f),
         )
         OdeVar.Disabled -> Triple(
-            Color.White.copy(alpha = if (dark) 0.05f else 0.06f),
-            Color.White.copy(alpha = 0.10f),
+            // 深色模式下内部透明（和边界同通透感），只留边框线条
+            Color.White.copy(alpha = if (dark) 0f else 0.06f),
+            Color.White.copy(alpha = if (dark) 0.14f else 0.10f),
             content.copy(alpha = 0.25f),
         )
         else -> Triple(
-            Color.White.copy(alpha = if (pressed) (if (dark) 0.25f else 0.35f) else (if (dark) 0.08f else 0.10f)),
+            // 深色模式：idle 背景完全透明（和边界一样的通透色，消除"小白框"分层）
+            //         pressed 只给极浅的按下反馈，接近边框 alpha
+            Color.White.copy(
+                alpha = when {
+                    pressed && dark  -> 0.14f
+                    pressed          -> 0.35f
+                    dark             -> 0f      // ← 关键：深色 idle 完全透明
+                    else             -> 0.10f
+                }
+            ),
             Color.White.copy(alpha = if (dark) 0.14f else 0.20f),
             content.copy(alpha = if (disabled) 0.25f else 0.95f),
         )
@@ -798,27 +808,28 @@ private fun RowScope.OdeKey(
             .weight(1f)
             .fillMaxSize()
             .scale(scale)
+            // 深色模式：完全关闭 shadow（透明背景会看穿阴影轮廓 → 形成"里面淡白框"）
             .shadow(
-                elevation = if (dark) 2.dp else 3.dp,
+                elevation = if (dark) 0.dp else 3.dp,
                 shape = shape,
                 clip = false,
-                ambientColor = if (dark) Color(0xFF000000).copy(alpha = 0.36f) else Color(0xFF000000).copy(alpha = 0.05f),
-                spotColor = if (dark) Color(0xFF000000).copy(alpha = 0.36f) else Color(0xFF000000).copy(alpha = 0.05f),
+                ambientColor = if (dark) Color.Unspecified else Color(0xFF000000).copy(alpha = 0.05f),
+                spotColor    = if (dark) Color.Unspecified else Color(0xFF000000).copy(alpha = 0.05f),
             )
             .clip(shape)
             .background(bgColor)
-            .border(1.dp, borderColor, shape)
+            // 深色下边框加粗到 1.2dp（因为没了 shadow + 没了 inner 高光，边框是唯一轮廓）
+            .border(if (dark) 1.2.dp else 1.dp, borderColor, shape)
             .let { mod ->
-                // inset 顶部 1px 高光（仿玻璃）
+                // 深色下完全去掉 inset 顶部高光——在透明背景上它会变成一条白线
+                if (dark) mod else
                 mod.then(Modifier.drawBehind {
                     val w = size.width
                     val radiusPx = with(density) { 14.dp.toPx() }
                     val insetX = radiusPx * 0.5f
                     if (w > insetX * 2 + 2f) {
-                        val topHi = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.22f)
-                                    else Color(0xFFFFFFFF).copy(alpha = 0.67f)
                         drawLine(
-                            color = topHi,
+                            color = Color(0xFFFFFFFF).copy(alpha = 0.67f),
                             start = androidx.compose.ui.geometry.Offset(insetX, 0.5f),
                             end = androidx.compose.ui.geometry.Offset(w - insetX, 0.5f),
                             strokeWidth = 1f,
@@ -877,35 +888,40 @@ private fun RowScope.OdeClearKey(
             .weight(1f)
             .fillMaxSize()
             .scale(scale)
+            // 深色模式：完全关闭 shadow（透明背景会看穿阴影轮廓 → 形成"里面淡白框"）
             .shadow(
-                elevation = if (dark) 2.dp else 3.dp,
+                elevation = if (dark) 0.dp else 3.dp,
                 shape = shape,
                 clip = false,
-                ambientColor = if (dark) Color(0xFF000000).copy(alpha = 0.36f) else Color(0xFF000000).copy(alpha = 0.05f),
-                spotColor = if (dark) Color(0xFF000000).copy(alpha = 0.36f) else Color(0xFF000000).copy(alpha = 0.05f),
+                ambientColor = if (dark) Color.Unspecified else Color(0xFF000000).copy(alpha = 0.05f),
+                spotColor    = if (dark) Color.Unspecified else Color(0xFF000000).copy(alpha = 0.05f),
             )
             .clip(shape)
             .background(
                 clearColor.copy(
-                    alpha = if (pressed) (if (dark) 0.35f else 0.50f)
-                           else (if (dark) 0.16f else 0.18f)
+                    alpha = when {
+                        pressed && dark  -> 0.30f
+                        pressed          -> 0.50f
+                        dark             -> 0f
+                        else             -> 0.18f
+                    }
                 )
             )
             .border(
-                1.dp,
+                if (dark) 1.2.dp else 1.dp,
                 clearColor.copy(alpha = if (dark) 0.40f else 0.50f),
                 shape,
             )
             .let { mod ->
+                // 深色下完全去掉 inset 顶部高光
+                if (dark) mod else
                 mod.then(Modifier.drawBehind {
                     val w = size.width
                     val radiusPx = with(density) { 14.dp.toPx() }
                     val insetX = radiusPx * 0.5f
                     if (w > insetX * 2 + 2f) {
-                        val topHi = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.22f)
-                                    else Color(0xFFFFFFFF).copy(alpha = 0.67f)
                         drawLine(
-                            color = topHi,
+                            color = Color(0xFFFFFFFF).copy(alpha = 0.67f),
                             start = androidx.compose.ui.geometry.Offset(insetX, 0.5f),
                             end = androidx.compose.ui.geometry.Offset(w - insetX, 0.5f),
                             strokeWidth = 1f,

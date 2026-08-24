@@ -205,8 +205,13 @@ private fun androidx.compose.foundation.layout.BoxScope.DrawersLayer(
         onPickMode = cb.onPickMode,
         onAbout = onAbout,
         modifier = Modifier.align(Alignment.TopStart).padding(start = 12.dp, top = 108.dp),
-        matlabActiveSubModule = (state.moduleStates[CalcMode.MatlabSet] as? MatlabSetModuleState)
-            ?.activeSubModule ?: "",
+        matlabActiveSubModule =
+            // 只有当前模式就是 MATLAB 集时，子菜单才显示选中态；
+            // 切到别的模块时传空串 → 子菜单全部变暗，避免残留高亮。
+            if (state.mode == CalcMode.MatlabSet)
+                (state.moduleStates[CalcMode.MatlabSet] as? MatlabSetModuleState)
+                    ?.activeSubModule ?: ""
+            else "",
         onPickSubModule = cb.onPickSubModule,
     )
     // 历史记录抽屉：同左

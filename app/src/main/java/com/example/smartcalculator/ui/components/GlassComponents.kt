@@ -296,18 +296,26 @@ fun GlassPillButton(
     )
     val dark = isDarkTheme()
 
-    // 同 GlassCircleButton 的颜色比例 × 1.22 补偿
+    // 深色模式：idle 内部完全透明，无 shadow，无内部高光 → 彻底消除"里面淡白框"
+    // 浅色模式：保留原液态玻璃填充比例。
     val bgAlpha = when {
-        pressed -> if (dark) 0.32f else 0.51f
-        else    -> if (dark) 0.245f else 0.39f
+        pressed && dark -> 0.14f
+        pressed         -> 0.51f
+        dark            -> 0f
+        else            -> 0.39f
     }
     val bg = Color(0xFFFFFFFF).copy(alpha = bgAlpha)
-    val borderC        = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.34f) else Color(0xFFFFFFFF).copy(alpha = 0.55f)
-    val innerHighlight = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.22f) else Color(0xFFFFFFFF).copy(alpha = 0.67f)
+    // 深色下边框加粗到 1.2dp，让它成为按键的唯一可见轮廓
+    val borderW = if (dark) 1.2.dp else 1.dp
+    val borderC = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.14f) else Color(0xFFFFFFFF).copy(alpha = 0.55f)
+    // 深色下彻底去掉内部高光（透明背景+高光=一根白线，很突兀）
+    val innerHighlightAlpha = if (dark) 0f else 0.67f
+    val innerHighlight = Color(0xFFFFFFFF).copy(alpha = innerHighlightAlpha)
 
-    val elevation = if (dark) 2.dp else 3.dp
-    val amb = if (dark) Color(0xFF000000).copy(alpha = 0.36f) else Color(0xFF000000).copy(alpha = 0.05f)
-    val spt = if (dark) Color(0xFF000000).copy(alpha = 0.36f) else Color(0xFF000000).copy(alpha = 0.05f)
+    // 深色下 elevation=0（透明背景会看穿阴影轮廓形成假白框）
+    val elevation = if (dark) 0.dp else 3.dp
+    val amb = if (dark) Color.Unspecified else Color(0xFF000000).copy(alpha = 0.05f)
+    val spt = if (dark) Color.Unspecified else Color(0xFF000000).copy(alpha = 0.05f)
 
     val shape = RoundedCornerShape(cornerRadius)
     val density = LocalDensity.current
@@ -325,22 +333,23 @@ fun GlassPillButton(
                 )
                 .clip(shape)
                 .background(bg)
-                .border(width = 1.dp, color = borderC, shape = shape)
-                .drawBehind {
-                    val w = size.width
-                    val h = size.height
-                    val radiusPx = with(density) { cornerRadius.toPx() }
-                    // inset 0 1px 0 顶部高光（矩形内只画中间段，两端留圆弧空间）
-                    val insetX = radiusPx * 0.5f
-                    if (w > insetX * 2 + 2f) {
-                        drawLine(
-                            color = innerHighlight,
-                            start = Offset(insetX, 0.5f),
-                            end = Offset(w - insetX, 0.5f),
-                            strokeWidth = 1f,
-                        )
+                .border(width = borderW, color = borderC, shape = shape)
+                .then(
+                    // 深色下高光 alpha=0，drawBehind 仍然执行但画的是完全透明线（等价于不画）
+                    Modifier.drawBehind {
+                        val w = size.width
+                        val radiusPx = with(density) { cornerRadius.toPx() }
+                        val insetX = radiusPx * 0.5f
+                        if (w > insetX * 2 + 2f) {
+                            drawLine(
+                                color = innerHighlight,
+                                start = Offset(insetX, 0.5f),
+                                end = Offset(w - insetX, 0.5f),
+                                strokeWidth = 1f,
+                            )
+                        }
                     }
-                }
+                )
                 // ⚠️ 只用标准 clickable，不引入长按检测
                 .clickable(interactionSource = interaction, indication = null) { onClick() },
             contentAlignment = Alignment.Center,
