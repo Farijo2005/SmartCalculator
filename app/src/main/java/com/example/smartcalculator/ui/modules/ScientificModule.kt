@@ -653,20 +653,11 @@ private fun SciWheel1(
             val fg = contentColor.copy(alpha = if (dark) 0.95f else 0.90f)
             val sendToken = if (shiftMode && item.shiftToken != null) item.shiftToken else item.token
             val displayLabel = if (shiftMode && item.shiftLabel != null) item.shiftLabel else item.label
-            GlassPillButton(
-                modifier = Modifier.height(48.dp).widthIn(min = 58.dp).padding(horizontal = 20.dp),
-                cornerRadius = 14.dp,
+            SciWheelButton(
+                label = displayLabel,
+                fgColor = fg,
                 onClick = { onIntent(ModuleIntent.Input(sendToken)) },
-            ) {
-                CompositionLocalProvider(LocalContentColor provides fg) {
-                    Text(
-                        displayLabel,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = LocalContentColor.current,
-                    )
-                }
-            }
+            )
         }
     }
 }
@@ -710,21 +701,89 @@ private fun SciWheel2(onIntent: (ModuleIntent) -> Unit, modifier: Modifier = Mod
                 item.isConst -> Color(0xFFE65100)
                 else -> Color(0xFFAD1457)
             }
-            GlassPillButton(
-                modifier = Modifier.height(48.dp).widthIn(min = 58.dp).padding(horizontal = 20.dp),
-                cornerRadius = 14.dp,
+            SciWheelButton(
+                label = item.label,
+                fgColor = fg,
                 onClick = { onIntent(ModuleIntent.Input(item.token)) },
-            ) {
-                CompositionLocalProvider(LocalContentColor provides fg) {
-                    Text(
-                        item.label,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = LocalContentColor.current,
-                    )
-                }
-            }
+            )
         }
+    }
+}
+
+// ============================================================
+//  Wheel Button (matches main key style)
+// ============================================================
+
+@Composable
+private fun SciWheelButton(
+    label: String,
+    fgColor: Color,
+    onClick: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by androidx.compose.animation.core.animateFloatAsState(
+        if (pressed) 0.94f else 1f,
+        androidx.compose.animation.core.tween(durationMillis = 150),
+        label = "sciWheelBtnScale",
+    )
+    val dark = isDarkTheme()
+    val density = LocalDensity.current
+    val shape = RoundedCornerShape(14.dp)
+
+    // 背景：深色 idle 完全透明；浅色保留淡玻璃底
+    val bgColor = when {
+        pressed && dark -> fgColor.copy(alpha = 0.18f)
+        pressed -> fgColor.copy(alpha = 0.28f)
+        dark -> Color.Transparent
+        else -> Color.White.copy(alpha = 0.10f)
+    }
+    // 边框：与主键盘一致，深色 1.2dp，浅色 1dp，颜色用前景色
+    val borderColor = fgColor.copy(alpha = if (dark) 0.55f else 0.65f)
+    val borderWidth = if (dark) 1.2.dp else 1.dp
+
+    Box(
+        modifier = Modifier
+            .height(48.dp)
+            .widthIn(min = 62.dp)
+            .scale(scale)
+            .shadow(
+                elevation = if (dark) 0.dp else 3.dp,
+                shape = shape,
+                clip = false,
+                ambientColor = if (dark) Color.Unspecified else Color(0xFF000000).copy(alpha = 0.05f),
+                spotColor = if (dark) Color.Unspecified else Color(0xFF000000).copy(alpha = 0.05f),
+            )
+            .clip(shape)
+            .background(bgColor)
+            .border(borderWidth, borderColor, shape)
+            .let { mod ->
+                if (dark) mod else
+                mod.then(Modifier.drawBehind {
+                    val w = size.width
+                    val radiusPx = with(density) { 14.dp.toPx() }
+                    val insetX = radiusPx * 0.5f
+                    if (w > insetX * 2 + 2f) {
+                        drawLine(
+                            color = Color(0xFFFFFFFF).copy(alpha = 0.67f),
+                            start = Offset(insetX, 0.5f),
+                            end = Offset(w - insetX, 0.5f),
+                            strokeWidth = 1f,
+                        )
+                    }
+                })
+            }
+            .clickable(interactionSource = interaction, indication = null) { onClick() }
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = fgColor,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
