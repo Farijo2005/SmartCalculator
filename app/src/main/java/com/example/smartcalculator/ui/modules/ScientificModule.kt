@@ -496,6 +496,7 @@ private fun BoxScope.SciKeypad(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                // 控制行：MODE / Shift / ( / ) / Ans
                 SciKeyRow(Modifier.weight(1f)) {
                     SciKey("MODE", SciKeyVariant.Mode) {
                         onIntent(ModuleIntent.Custom("sci:mode"))
@@ -503,57 +504,9 @@ private fun BoxScope.SciKeypad(
                     SciKey("Shift", SciKeyVariant.Mode, highlighted = state.shiftMode) {
                         onIntent(ModuleIntent.Custom("sci:shift"))
                     }
-                    SciKey(if (state.shiftMode) "sin⁻¹" else "sin", SciKeyVariant.Trig) {
-                        onIntent(ModuleIntent.Input(if (state.shiftMode) "asin(" else "sin("))
-                    }
-                    SciKey(if (state.shiftMode) "cos⁻¹" else "cos", SciKeyVariant.Trig) {
-                        onIntent(ModuleIntent.Input(if (state.shiftMode) "acos(" else "cos("))
-                    }
-                    SciKey(if (state.shiftMode) "tan⁻¹" else "tan", SciKeyVariant.Trig) {
-                        onIntent(ModuleIntent.Input(if (state.shiftMode) "atan(" else "tan("))
-                    }
-                }
-
-                SciKeyRow(Modifier.weight(1f)) {
-                    SciKey(if (state.shiftMode) "10ˣ" else "log", SciKeyVariant.Func) {
-                        val token = if (state.shiftMode) "10^(" else "log("
-                        onIntent(ModuleIntent.Input(token))
-                    }
-                    SciKey(if (state.shiftMode) "eˣ" else "ln", SciKeyVariant.Func) {
-                        val token = if (state.shiftMode) "exp(" else "ln("
-                        onIntent(ModuleIntent.Input(token))
-                    }
-                    SciKey(if (state.shiftMode) "x²" else "√", SciKeyVariant.Func) {
-                        val token = if (state.shiftMode) "^2" else "sqrt("
-                        onIntent(ModuleIntent.Input(token))
-                    }
-                    SciKey(if (state.shiftMode) "y√x" else "xʸ", SciKeyVariant.Func) {
-                        val token = if (state.shiftMode) "^(1/" else "^"
-                        onIntent(ModuleIntent.Input(token))
-                    }
-                    SciKey(if (state.shiftMode) "e" else "π", SciKeyVariant.Const) {
-                        val token = if (state.shiftMode) "e" else "pi"
-                        onIntent(ModuleIntent.Input(token))
-                    }
-                }
-
-                // 控制行：AC / ⌫ / Ans / ( / ) — 移到 R2 与 R3 之间，更符合人机工程
-                SciKeyRow(Modifier.weight(1f)) {
-                    SciKey("AC", SciKeyVariant.Clear) { onIntent(ModuleIntent.Clear) }
-                    if (state.shiftMode) {
-                        SciKey("DEL", SciKeyVariant.Clear) { onIntent(ModuleIntent.Clear) }
-                    } else {
-                        SciClearKey(
-                            onShortTap = { onIntent(ModuleIntent.Backspace) },
-                            onLongPress = { onIntent(ModuleIntent.Clear) },
-                        )
-                    }
-                    SciKey("Ans", SciKeyVariant.Memory) { onIntent(ModuleIntent.Input("ans")) }
-                    SciKey(if (state.shiftMode) ")" else "(", SciKeyVariant.Func) {
-                        val token = if (state.shiftMode) ")" else "("
-                        onIntent(ModuleIntent.Input(token))
-                    }
+                    SciKey("(", SciKeyVariant.Func) { onIntent(ModuleIntent.Input("(")) }
                     SciKey(")", SciKeyVariant.Func) { onIntent(ModuleIntent.Input(")")) }
+                    SciKey("Ans", SciKeyVariant.Memory) { onIntent(ModuleIntent.Input("ans")) }
                 }
 
                 SciKeyRow(Modifier.weight(1f)) {
@@ -583,10 +536,10 @@ private fun BoxScope.SciKeypad(
                     SciKey("2") { onIntent(ModuleIntent.Input("2")) }
                     SciKey("3") { onIntent(ModuleIntent.Input("3")) }
                     SciKey("−", SciKeyVariant.Operator) { onIntent(ModuleIntent.Input("-")) }
-                    SciKey(if (state.shiftMode) "|x|" else "1/x", SciKeyVariant.Func) {
-                        val token = if (state.shiftMode) "abs(" else "1/("
-                        onIntent(ModuleIntent.Input(token))
-                    }
+                    SciClearKey(
+                        onShortTap = { onIntent(ModuleIntent.Backspace) },
+                        onLongPress = { onIntent(ModuleIntent.Clear) },
+                    )
                 }
 
                 SciKeyRow(Modifier.weight(1f)) {
@@ -597,7 +550,7 @@ private fun BoxScope.SciKeypad(
                     SciKey(".") { onIntent(ModuleIntent.Input(".")) }
                     SciKey("±", SciKeyVariant.Func) { onIntent(ModuleIntent.Input("-")) }
                     SciKey("+", SciKeyVariant.Operator) { onIntent(ModuleIntent.Input("+")) }
-                    SciKey("x!", SciKeyVariant.Func) { onIntent(ModuleIntent.Input("!")) }
+                    SciKey("AC", SciKeyVariant.Clear) { onIntent(ModuleIntent.Clear) }
                 }
             }
         }
@@ -670,15 +623,14 @@ private fun SciWheel1(
 private data class SciVarItem(val label: String, val token: String, val isConst: Boolean = false)
 
 private val SCI_VAR_ITEMS = listOf(
+    SciVarItem("π", "pi", isConst = true),
+    SciVarItem("e", "e", isConst = true),
+    SciVarItem("φ", "phi", isConst = true),
+    SciVarItem("g", "9.80665", isConst = true),
     SciVarItem("A", "A"), SciVarItem("B", "B"),
     SciVarItem("C", "C"), SciVarItem("D", "D"),
     SciVarItem("X", "X"), SciVarItem("Y", "Y"),
     SciVarItem("M", "M"),
-    SciVarItem("π", "pi", isConst = true),
-    SciVarItem("e", "e", isConst = true),
-    SciVarItem("φ", "phi", isConst = true),
-    SciVarItem("√2", "sqrt2", isConst = true),
-    SciVarItem("g", "9.80665", isConst = true),
 )
 
 @Composable
@@ -821,31 +773,40 @@ private fun RowScope.SciKey(
     val dark = isDarkTheme()
     val primary = MaterialTheme.colorScheme.primary
 
+    // 液态玻璃马卡龙配色：
+    // 运算符/等号-琥珀橙 · 功能键-青绿 · 三角-亮紫 · 内存键-靛蓝 · 清除-玫红 · 常量-金黄
+    val opColor = Color(0xFFF5A623)
+    val funcColor = Color(0xFF0FA47F)
+    val trigColor = Color(0xFFB54BE0)
+    val clearColor = Color(0xFFFF5F5F)
+    val memColor = Color(0xFF4F6BED)
+    val constColor = Color(0xFFF59E0B)
+
     val (bgColor, borderColor, fgColor) = when (variant) {
         SciKeyVariant.Equal -> Triple(
-            primary.copy(alpha = 1f),
-            primary.copy(alpha = 0.85f),
+            opColor.copy(alpha = 1f),
+            opColor.copy(alpha = 0.85f),
             Color.White,
         )
         SciKeyVariant.Clear -> Triple(
-            Color(0xFFFF6B6B).copy(alpha = if (pressed) (if (dark) 0.40f else 0.55f) else (if (dark) 0.20f else 0.25f)),
-            Color(0xFFFF6B6B).copy(alpha = if (dark) 0.50f else 0.60f),
-            if (dark) Color(0xFFFF6B6B) else Color(0xFFE53935),
+            clearColor.copy(alpha = if (pressed) (if (dark) 0.40f else 0.55f) else (if (dark) 0.20f else 0.25f)),
+            clearColor.copy(alpha = if (dark) 0.50f else 0.60f),
+            if (dark) clearColor else Color(0xFFE5484D),
         )
         SciKeyVariant.Operator -> Triple(
-            primary.copy(alpha = if (pressed) (if (dark) 0.35f else 0.50f) else (if (dark) 0.18f else 0.22f)),
-            primary.copy(alpha = if (dark) 0.40f else 0.50f),
-            primary,
+            opColor.copy(alpha = if (pressed) (if (dark) 0.35f else 0.50f) else (if (dark) 0.18f else 0.22f)),
+            opColor.copy(alpha = if (dark) 0.40f else 0.50f),
+            if (dark) opColor.copy(alpha = 0.95f) else Color(0xFFC07D0A),
         )
         SciKeyVariant.Func -> Triple(
-            Color(0xFF15803D).copy(alpha = if (pressed) (if (dark) 0.20f else 0.35f) else (if (dark) 0f else 0.08f)),
-            Color(0xFF15803D).copy(alpha = if (dark) 0.30f else 0.40f),
-            Color(0xFF15803D),
+            funcColor.copy(alpha = if (pressed) (if (dark) 0.25f else 0.35f) else (if (dark) 0.08f else 0.12f)),
+            funcColor.copy(alpha = if (dark) 0.40f else 0.50f),
+            if (dark) funcColor.copy(alpha = 0.95f) else Color(0xFF0B7A5E),
         )
         SciKeyVariant.Trig -> Triple(
-            Color(0xFFA21CAF).copy(alpha = if (pressed) (if (dark) 0.20f else 0.35f) else (if (dark) 0f else 0.08f)),
-            Color(0xFFA21CAF).copy(alpha = if (dark) 0.30f else 0.40f),
-            Color(0xFFA21CAF),
+            trigColor.copy(alpha = if (pressed) (if (dark) 0.25f else 0.35f) else (if (dark) 0.08f else 0.12f)),
+            trigColor.copy(alpha = if (dark) 0.40f else 0.50f),
+            if (dark) trigColor.copy(alpha = 0.95f) else Color(0xFF8E2BAE),
         )
         SciKeyVariant.Mode -> Triple(
             primary.copy(alpha = if (highlighted) (if (dark) 0.35f else 0.50f) else (if (pressed) (if (dark) 0.25f else 0.35f) else (if (dark) 0.10f else 0.15f))),
@@ -853,14 +814,14 @@ private fun RowScope.SciKey(
             if (highlighted) primary else primary.copy(alpha = 0.90f),
         )
         SciKeyVariant.Memory -> Triple(
-            Color(0xFFA16207).copy(alpha = if (pressed) (if (dark) 0.20f else 0.35f) else (if (dark) 0f else 0.08f)),
-            Color(0xFFA16207).copy(alpha = if (dark) 0.30f else 0.40f),
-            Color(0xFFA16207),
+            memColor.copy(alpha = if (pressed) (if (dark) 0.25f else 0.35f) else (if (dark) 0.08f else 0.12f)),
+            memColor.copy(alpha = if (dark) 0.40f else 0.50f),
+            if (dark) memColor.copy(alpha = 0.95f) else Color(0xFF3E5AD9),
         )
         SciKeyVariant.Const -> Triple(
-            Color(0xFFB45309).copy(alpha = if (pressed) (if (dark) 0.20f else 0.35f) else (if (dark) 0f else 0.08f)),
-            Color(0xFFB45309).copy(alpha = if (dark) 0.30f else 0.40f),
-            Color(0xFFB45309),
+            constColor.copy(alpha = if (pressed) (if (dark) 0.25f else 0.35f) else (if (dark) 0.08f else 0.12f)),
+            constColor.copy(alpha = if (dark) 0.40f else 0.50f),
+            if (dark) constColor.copy(alpha = 0.95f) else Color(0xFFC07D0A),
         )
         else -> Triple(
             Color.White.copy(
@@ -937,7 +898,7 @@ private fun RowScope.SciClearKey(
 ) {
     val view = LocalView.current
     val dark = isDarkTheme()
-    val clearColor = if (dark) Color(0xFFFF6B6B) else Color(0xFFE53935)
+    val clearColor = if (dark) Color(0xFFFF5F5F) else Color(0xFFE5484D)
 
     val pressedState = remember { mutableStateOf(false) }
     val pressed = pressedState.value
