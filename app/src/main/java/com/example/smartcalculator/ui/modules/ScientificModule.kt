@@ -537,6 +537,25 @@ private fun BoxScope.SciKeypad(
                     }
                 }
 
+                // 控制行：AC / ⌫ / Ans / ( / ) — 移到 R2 与 R3 之间，更符合人机工程
+                SciKeyRow(Modifier.weight(1f)) {
+                    SciKey("AC", SciKeyVariant.Clear) { onIntent(ModuleIntent.Clear) }
+                    if (state.shiftMode) {
+                        SciKey("DEL", SciKeyVariant.Clear) { onIntent(ModuleIntent.Clear) }
+                    } else {
+                        SciClearKey(
+                            onShortTap = { onIntent(ModuleIntent.Backspace) },
+                            onLongPress = { onIntent(ModuleIntent.Clear) },
+                        )
+                    }
+                    SciKey("Ans", SciKeyVariant.Memory) { onIntent(ModuleIntent.Input("ans")) }
+                    SciKey(if (state.shiftMode) ")" else "(", SciKeyVariant.Func) {
+                        val token = if (state.shiftMode) ")" else "("
+                        onIntent(ModuleIntent.Input(token))
+                    }
+                    SciKey(")", SciKeyVariant.Func) { onIntent(ModuleIntent.Input(")")) }
+                }
+
                 SciKeyRow(Modifier.weight(1f)) {
                     SciKey("7") { onIntent(ModuleIntent.Input("7")) }
                     SciKey("8") { onIntent(ModuleIntent.Input("8")) }
@@ -580,24 +599,6 @@ private fun BoxScope.SciKeypad(
                     SciKey("+", SciKeyVariant.Operator) { onIntent(ModuleIntent.Input("+")) }
                     SciKey("x!", SciKeyVariant.Func) { onIntent(ModuleIntent.Input("!")) }
                 }
-            }
-
-            SciKeyRow(Modifier.height(56.dp)) {
-                SciKey("AC", SciKeyVariant.Clear) { onIntent(ModuleIntent.Clear) }
-                if (state.shiftMode) {
-                    SciKey("DEL", SciKeyVariant.Clear) { onIntent(ModuleIntent.Clear) }
-                } else {
-                    SciClearKey(
-                        onShortTap = { onIntent(ModuleIntent.Backspace) },
-                        onLongPress = { onIntent(ModuleIntent.Clear) },
-                    )
-                }
-                SciKey("Ans", SciKeyVariant.Memory) { onIntent(ModuleIntent.Input("ans")) }
-                SciKey(if (state.shiftMode) ")" else "(", SciKeyVariant.Func) {
-                    val token = if (state.shiftMode) ")" else "("
-                    onIntent(ModuleIntent.Input(token))
-                }
-                SciKey(")", SciKeyVariant.Func) { onIntent(ModuleIntent.Input(")")) }
             }
         }
     }
