@@ -269,3 +269,83 @@ fun GlassItemButton(
         }
     }
 }
+
+// ============================================================================
+//  GlassPillButton —— 胶囊形液态玻璃按钮（圆角矩形，非圆形）
+//  从 GlassCircleButton 复制并改造：
+//  - 形状：RoundedCornerShape(cornerRadius)（默认 14.dp）
+//  - 尺寸：由外部 modifier 决定（weight + fillMaxSize 或自定义 size）
+//  - 交互：**只用标准 .clickable()，不用 combinedClickable，不用 detectTapGestures**
+//    → 短按即时响应，无 500ms 长按检测延迟
+//  - 视觉：同 GlassCircleButton 的液态玻璃（背景 alpha、边框、inset 顶部高光、阴影、按压缩放）
+// ============================================================================
+
+@Composable
+fun GlassPillButton(
+    modifier: Modifier = Modifier,
+    cornerRadius: Dp = 14.dp,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        if (pressed) 0.94f else 1.0f,
+        tween(durationMillis = 150),
+        label = "glassPillBtnScale",
+    )
+    val dark = isDarkTheme()
+
+    // 同 GlassCircleButton 的颜色比例 × 1.22 补偿
+    val bgAlpha = when {
+        pressed -> if (dark) 0.32f else 0.51f
+        else    -> if (dark) 0.245f else 0.39f
+    }
+    val bg = Color(0xFFFFFFFF).copy(alpha = bgAlpha)
+    val borderC        = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.34f) else Color(0xFFFFFFFF).copy(alpha = 0.55f)
+    val innerHighlight = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.22f) else Color(0xFFFFFFFF).copy(alpha = 0.67f)
+
+    val elevation = if (dark) 2.dp else 3.dp
+    val amb = if (dark) Color(0xFF000000).copy(alpha = 0.36f) else Color(0xFF000000).copy(alpha = 0.05f)
+    val spt = if (dark) Color(0xFF000000).copy(alpha = 0.36f) else Color(0xFF000000).copy(alpha = 0.05f)
+
+    val shape = RoundedCornerShape(cornerRadius)
+    val density = LocalDensity.current
+
+    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
+        Box(
+            modifier = modifier
+                .scale(scale)
+                .shadow(
+                    elevation = elevation,
+                    shape = shape,
+                    clip = false,
+                    ambientColor = amb,
+                    spotColor = spt,
+                )
+                .clip(shape)
+                .background(bg)
+                .border(width = 1.dp, color = borderC, shape = shape)
+                .drawBehind {
+                    val w = size.width
+                    val h = size.height
+                    val radiusPx = with(density) { cornerRadius.toPx() }
+                    // inset 0 1px 0 顶部高光（矩形内只画中间段，两端留圆弧空间）
+                    val insetX = radiusPx * 0.5f
+                    if (w > insetX * 2 + 2f) {
+                        drawLine(
+                            color = innerHighlight,
+                            start = Offset(insetX, 0.5f),
+                            end = Offset(w - insetX, 0.5f),
+                            strokeWidth = 1f,
+                        )
+                    }
+                }
+                // ⚠️ 只用标准 clickable，不引入长按检测
+                .clickable(interactionSource = interaction, indication = null) { onClick() },
+            contentAlignment = Alignment.Center,
+        ) {
+            content()
+        }
+    }
+}

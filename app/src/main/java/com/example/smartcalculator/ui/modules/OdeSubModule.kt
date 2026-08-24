@@ -1,8 +1,10 @@
 package com.example.smartcalculator.ui.modules
 
+import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -13,15 +15,12 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LocalContentColor
@@ -35,23 +34,43 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.smartcalculator.ui.components.GlassCircleButton
+import com.example.smartcalculator.ui.components.GlassPillButton
 import com.example.smartcalculator.ui.components.isDarkTheme
 import com.example.smartcalculator.ui.theme.Background100
 import com.example.smartcalculator.ui.theme.PanelAppleDark
-import com.example.smartcalculator.ui.theme.Text200
 import kotlin.math.abs
 import kotlin.math.round
+
+// ============================================================
+//  ODE 子模块 —— 函数/常量 token 清单（供整 token 删除用）
+// ============================================================
+
+/** 函数 token（带左括号），按长度降序排列，避免短的先匹配 */
+private val FUNC_TOKENS: List<String> = listOf(
+    "sqrt(", "asin(", "acos(", "atan(", "sinh(", "cosh(", "tanh(",  // 5 字符
+    "sin(", "cos(", "tan(", "log(", "exp(", "abs(",                 // 4 字符
+    "ln(",                                                           // 3 字符
+)
+
+/** 常量 token（不含括号），按长度降序 */
+private val CONST_TOKENS: List<String> = listOf(
+    "pi",  // 2 字符
+    // "e" 只有 1 字符，单独处理（就是删 1 个）
+)
 
 // ============================================================
 //  ODE 子模块 —— 状态定义
@@ -98,7 +117,7 @@ internal fun reduceOde(
     is ModuleIntent.Input -> state.inputToken(intent.value)
     is ModuleIntent.Evaluate -> state.evaluate()
     is ModuleIntent.Clear -> OdeSubModuleState(order = state.order, method = state.method)
-    is ModuleIntent.Backspace -> state.backspace()
+    is ModuleIntent.Backspace -> state.backspaceToken()
     is ModuleIntent.Custom -> when (intent.key) {
         "ode:order" -> {
             val newOrder = (intent.payload as? Int) ?: 1
@@ -132,20 +151,44 @@ private fun OdeSubModuleState.inputToken(token: String): OdeSubModuleState {
     }
 }
 
-private fun OdeSubModuleState.backspace(): OdeSubModuleState {
+/**
+ * ⌫ Backspace（整 token 删除）：
+ *  - 数字格：仍按单个字符删除（数字无"函数"概念）
+ *  - 表达式格：
+ *     1. 末尾匹配 FUNC_TOKENS（整函数名 + 左括号，如 "cos("）→ 一次性删掉整个 token
+ *     2. 末尾匹配 CONST_TOKENS（"pi" 等常量）→ 一次性删掉整个常量
+ *     3. 单字符运算符/括号/数字 → 删 1 个字符
+ */
+private fun OdeSubModuleState.backspaceToken(): OdeSubModuleState {
     if (isExprCell(activeCell, order)) {
         val idx = exprIdx(activeCell, order)
         val s = exprCells[idx]
         if (s.isEmpty()) return this
-        val newExpr = exprCells.toMutableList().also { it[idx] = s.dropLast(1) }
+        val dropped = dropLastToken(s)
+        val newExpr = exprCells.toMutableList().also { it[idx] = dropped }
         return copy(exprCells = newExpr, errorMsg = null, result = emptyList())
     } else {
+        // 数字格：单个字符删
         val idx = numIdx(activeCell, order)
         val s = numCells[idx]
         if (s.isEmpty()) return this
         val newNum = numCells.toMutableList().also { it[idx] = s.dropLast(1) }
         return copy(numCells = newNum, errorMsg = null, result = emptyList())
     }
+}
+
+/** 从表达式末尾删掉一个"token"：整函数/整常量 或 单字符 */
+private fun dropLastToken(s: String): String {
+    // 1) 先尝试匹配函数 token（最长优先）
+    for (tok in FUNC_TOKENS) {
+        if (s.endsWith(tok)) return s.dropLast(tok.length)
+    }
+    // 2) 再匹配常量 token（如 "pi"）
+    for (tok in CONST_TOKENS) {
+        if (s.endsWith(tok)) return s.dropLast(tok.length)
+    }
+    // 3) 否则删单个字符（运算符/括号/数字/e 等）
+    return s.dropLast(1)
 }
 
 private fun OdeSubModuleState.evaluate(): OdeSubModuleState {
@@ -312,7 +355,6 @@ private fun BoxScope.OdeDisplay(
         }
 
         // ===== 初始条件行 =====
-        // x₀, y₀
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -327,7 +369,6 @@ private fun BoxScope.OdeDisplay(
                 onClick = { onIntent(ModuleIntent.Custom("ode:active", cellIdx(state.order, 1))) },
             )
         }
-        // x_end, y'₀（二阶）或 h（一阶）
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -349,7 +390,6 @@ private fun BoxScope.OdeDisplay(
                 )
             }
         }
-        // 二阶多一行 h
         if (state.order == 2) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -501,6 +541,8 @@ private fun RowScope.OdeMethodTab(
 
 // ============================================================
 //  键盘：Tab 行 + 水平滚轮函数条 + 6×4 按键
+//  ⚠️  除 ⌫ 键外，所有按键统一使用 GlassPillButton（纯短按 clickable，无长按延迟）
+//  ⚠️  ⌫ 键单独使用 pointerInput.detectTapGestures：短按=删整token，长按=清空+震动
 // ============================================================
 
 @Composable
@@ -526,7 +568,7 @@ private fun BoxScope.OdeKeypad(
                 }
             }
 
-            // ===== 水平滚轮函数条 =====
+            // ===== 水平滚轮函数条（也用 GlassPillButton 风格封装，保证纯短按） =====
             FunctionWheel(state, onIntent, Modifier.fillMaxWidth())
 
             // ===== 6×4 按键：均匀分配剩余高度 =====
@@ -571,11 +613,13 @@ private fun BoxScope.OdeKeypad(
                     OdeKey("3") { onIntent(ModuleIntent.Input("3")) }
                     OdeKey("−", OdeVar.Operator) { onIntent(ModuleIntent.Input("-")) }
                 }
-                // R6: 0 . ⌫ ↵
+                // R6: 0 . ⌫ ↵   —— ⌫ 单独处理（长短按）
                 OdeKeyRow(Modifier.weight(1f)) {
                     OdeKey("0") { onIntent(ModuleIntent.Input("0")) }
                     OdeKey(".") { onIntent(ModuleIntent.Input(".")) }
-                    OdeKey("⌫", OdeVar.Clear) { onIntent(ModuleIntent.Backspace) }
+                    // ⚠️ 唯一具有长短按能力的键：⌫
+                    OdeClearKey(onShortTap = { onIntent(ModuleIntent.Backspace) },
+                                onLongPress = { onIntent(ModuleIntent.Clear) })
                     OdeKey("↵", OdeVar.Equal) { onIntent(ModuleIntent.Evaluate) }
                 }
             }
@@ -618,6 +662,7 @@ private fun RowScope.OdeSubTab(
 
 // ============================================================
 //  水平滚轮函数条
+//  所有按钮用 GlassPillButton 风格（纯 clickable，无长按检测延迟）
 // ============================================================
 
 private data class FuncItem(val label: String, val token: String)
@@ -654,33 +699,22 @@ private fun FunctionWheel(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             FUNC_ITEMS.forEach { fi ->
-                val interaction = remember { MutableInteractionSource() }
-                val pressed by interaction.collectIsPressedAsState()
-                val scale = if (pressed) 0.92f else 1f
-                val bg = if (pressed) Color.White.copy(alpha = if (dark) 0.25f else 0.35f)
-                         else Color.White.copy(alpha = if (dark) 0.08f else 0.10f)
-                val fg = contentColor.copy(alpha = if (dark) 0.95f else 0.90f)
-                val border = Color.White.copy(alpha = if (dark) 0.14f else 0.20f)
-                Box(
-                    modifier = Modifier
-                        .scale(scale)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(bg)
-                        .border(1.dp, border, RoundedCornerShape(10.dp))
-                        .clickable(
-                            interactionSource = interaction,
-                            indication = null,
-                            onClick = { onIntent(ModuleIntent.Input(fi.token)) },
-                        )
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    contentAlignment = Alignment.Center,
+                // 禁用态：二阶下 y 变量禁用（这里函数键永不禁用，给一个固定禁用判断）
+                val disabled = false
+                val fg = contentColor.copy(alpha = if (disabled) 0.25f else if (dark) 0.95f else 0.90f)
+                GlassPillButton(
+                    modifier = Modifier.height(34.dp),
+                    cornerRadius = 10.dp,
+                    onClick = { if (!disabled) onIntent(ModuleIntent.Input(fi.token)) },
                 ) {
-                    Text(
-                        fi.label,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = fg,
-                    )
+                    CompositionLocalProvider(LocalContentColor provides fg) {
+                        Text(
+                            fi.label,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = LocalContentColor.current,
+                        )
+                    }
                 }
             }
         }
@@ -688,7 +722,8 @@ private fun FunctionWheel(
 }
 
 // ============================================================
-//  按键组件（仿程序员模块 GlassKeyVariant）
+//  按键组件：OdeKey（内部用 GlassPillButton 包装变体颜色）
+//  ⚠️  除 ⌫ 外所有键 → 纯 GlassPillButton.clickable，无长按
 // ============================================================
 
 private enum class OdeVar { Default, Operator, Clear, Equal, Disabled }
@@ -705,6 +740,10 @@ private fun OdeKeyRow(
     ) { content() }
 }
 
+/**
+ * 通用 ODE 按键：在 GlassPillButton 外套一层 variant（颜色变体）
+ * ⚠️ 交互只用标准 clickable，**无长按能力**
+ */
 @Composable
 private fun RowScope.OdeKey(
     label: String,
@@ -720,17 +759,13 @@ private fun RowScope.OdeKey(
     val clearColor = if (dark) Color(0xFFFF6B6B) else Color(0xFFE53935)
     val content = LocalContentColor.current
 
-    val (bg, border, fg) = when (variant) {
+    val (bgColor: Color, borderColor: Color, fgColor: Color) = when (variant) {
         OdeVar.Equal -> Triple(
             primary.copy(alpha = if (disabled) 0.3f else 1f),
             primary.copy(alpha = if (disabled) 0.4f else 0.85f),
             Color.White,
         )
-        OdeVar.Clear -> Triple(
-            clearColor.copy(alpha = if (pressed) (if (dark) 0.35f else 0.50f) else (if (dark) 0.16f else 0.18f)),
-            clearColor.copy(alpha = if (dark) 0.40f else 0.50f),
-            clearColor.copy(alpha = if (disabled) 0.25f else 1f),
-        )
+        OdeVar.Clear -> error("Clear 变体必须使用 OdeClearKey（单独实现长短按）")
         OdeVar.Operator -> Triple(
             primary.copy(alpha = if (pressed) (if (dark) 0.35f else 0.50f) else (if (dark) 0.18f else 0.22f)),
             primary.copy(alpha = if (dark) 0.40f else 0.50f),
@@ -755,28 +790,154 @@ private fun RowScope.OdeKey(
     }
     val weight = if (label.length >= 2) FontWeight.SemiBold else FontWeight.Medium
 
-    val safeOnClick: () -> Unit = { if (!disabled) onClick() }
+    val shape = RoundedCornerShape(14.dp)
+    val density = LocalDensity.current
 
     Box(
         modifier = Modifier
             .weight(1f)
             .fillMaxSize()
             .scale(scale)
-            .clip(RoundedCornerShape(14.dp))
-            .background(bg)
-            .border(1.dp, border, RoundedCornerShape(14.dp))
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                onClick = safeOnClick,
-            ),
+            .shadow(
+                elevation = if (dark) 2.dp else 3.dp,
+                shape = shape,
+                clip = false,
+                ambientColor = if (dark) Color(0xFF000000).copy(alpha = 0.36f) else Color(0xFF000000).copy(alpha = 0.05f),
+                spotColor = if (dark) Color(0xFF000000).copy(alpha = 0.36f) else Color(0xFF000000).copy(alpha = 0.05f),
+            )
+            .clip(shape)
+            .background(bgColor)
+            .border(1.dp, borderColor, shape)
+            .let { mod ->
+                // inset 顶部 1px 高光（仿玻璃）
+                mod.then(Modifier.drawBehind {
+                    val w = size.width
+                    val radiusPx = with(density) { 14.dp.toPx() }
+                    val insetX = radiusPx * 0.5f
+                    if (w > insetX * 2 + 2f) {
+                        val topHi = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.22f)
+                                    else Color(0xFFFFFFFF).copy(alpha = 0.67f)
+                        drawLine(
+                            color = topHi,
+                            start = androidx.compose.ui.geometry.Offset(insetX, 0.5f),
+                            end = androidx.compose.ui.geometry.Offset(w - insetX, 0.5f),
+                            strokeWidth = 1f,
+                        )
+                    }
+                })
+            }
+            // ⚠️ 只用标准 clickable，不引入长按检测
+            .clickable(interactionSource = interaction, indication = null) {
+                if (!disabled) onClick()
+            },
         contentAlignment = Alignment.Center,
     ) {
         Text(
             label,
             fontSize = baseFont,
             fontWeight = weight,
-            color = fg,
+            color = fgColor,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+/**
+ * 🔴 唯一具有长短按能力的键：⌫（Clear / Backspace）
+ *  - 短按 onTap → 执行 backspace（删除**整个 token**，如 cos(、sin(、sqrt(）
+ *  - 长按 onLongPress → 执行 Clear（清空所有内容）+ **震动反馈**
+ *
+ *  ⚠️ 关键实现约束：**只挂一个 pointerInput**，在里面同时维护 pressed 态和 detectTapGestures。
+ *     不能再叠加 Modifier.clickable()（哪怕是空实现）——clickable 会消费 down/up 事件，
+ *     导致 detectTapGestures 拿不到完整事件流，tap 和 longPress 都会失效。
+ */
+@Composable
+private fun RowScope.OdeClearKey(
+    onShortTap: () -> Unit,
+    onLongPress: () -> Unit,
+) {
+    val view = LocalView.current
+    val dark = isDarkTheme()
+    val clearColor = if (dark) Color(0xFFFF6B6B) else Color(0xFFE53935)
+
+    // 自己维护 pressed 态（不依赖 interactionSource）
+    val pressedState = remember { androidx.compose.runtime.mutableStateOf(false) }
+    val pressed = pressedState.value
+    val scale by androidx.compose.animation.core.animateFloatAsState(
+        if (pressed) 0.94f else 1f,
+        androidx.compose.animation.core.tween(durationMillis = 150),
+        label = "clearBtnScale",
+    )
+
+    val shape = RoundedCornerShape(14.dp)
+    val density = LocalDensity.current
+
+    Box(
+        modifier = Modifier
+            .weight(1f)
+            .fillMaxSize()
+            .scale(scale)
+            .shadow(
+                elevation = if (dark) 2.dp else 3.dp,
+                shape = shape,
+                clip = false,
+                ambientColor = if (dark) Color(0xFF000000).copy(alpha = 0.36f) else Color(0xFF000000).copy(alpha = 0.05f),
+                spotColor = if (dark) Color(0xFF000000).copy(alpha = 0.36f) else Color(0xFF000000).copy(alpha = 0.05f),
+            )
+            .clip(shape)
+            .background(
+                clearColor.copy(
+                    alpha = if (pressed) (if (dark) 0.35f else 0.50f)
+                           else (if (dark) 0.16f else 0.18f)
+                )
+            )
+            .border(
+                1.dp,
+                clearColor.copy(alpha = if (dark) 0.40f else 0.50f),
+                shape,
+            )
+            .let { mod ->
+                mod.then(Modifier.drawBehind {
+                    val w = size.width
+                    val radiusPx = with(density) { 14.dp.toPx() }
+                    val insetX = radiusPx * 0.5f
+                    if (w > insetX * 2 + 2f) {
+                        val topHi = if (dark) Color(0xFFFFFFFF).copy(alpha = 0.22f)
+                                    else Color(0xFFFFFFFF).copy(alpha = 0.67f)
+                        drawLine(
+                            color = topHi,
+                            start = androidx.compose.ui.geometry.Offset(insetX, 0.5f),
+                            end = androidx.compose.ui.geometry.Offset(w - insetX, 0.5f),
+                            strokeWidth = 1f,
+                        )
+                    }
+                })
+            }
+            // ⚠️ 唯一的事件消费者：detectTapGestures（不要叠加 clickable / 其他 pointerInput）
+            //    用 onPress 回调维护 pressed 视觉态：按下=true，tryAwaitRelease 返回/超时=false
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = {
+                        pressedState.value = true
+                        // tryAwaitRelease 会在松手或手势被取消时返回，自动恢复 pressed=false
+                        tryAwaitRelease()
+                        pressedState.value = false
+                    },
+                    onTap = { onShortTap() },
+                    onLongPress = {
+                        // 长按震动反馈
+                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                        onLongPress()
+                    },
+                )
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "⌫",
+            fontSize = 19.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = clearColor,
             textAlign = TextAlign.Center,
         )
     }
