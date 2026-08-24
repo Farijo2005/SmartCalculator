@@ -165,6 +165,25 @@ class CalculatorViewModel(application: Application) : AndroidViewModel(applicati
                     states[mode] = newState
                     s.copy(moduleStates = states)
                 }
+                CalcMode.Scientific -> {
+                    val old = states[mode] as? com.example.smartcalculator.ui.modules.ScientificModuleState
+                        ?: com.example.smartcalculator.ui.modules.ScientificModuleState()
+                    val newState = com.example.smartcalculator.ui.modules.reduceScientific(old, intent)
+                    states[mode] = newState
+
+                    if (intent is com.example.smartcalculator.ui.modules.ModuleIntent.Evaluate &&
+                        newState.errorMsg == null && newState.justEvaluated
+                    ) {
+                        val item = HistoryItem(
+                            expression = newState.expression.ifBlank { " " },
+                            result = newState.display,
+                        )
+                        s.copy(
+                            moduleStates = states,
+                            history = listOf(item) + s.history.take(99),
+                        )
+                    } else s.copy(moduleStates = states)
+                }
                 else -> s
             }
         }
