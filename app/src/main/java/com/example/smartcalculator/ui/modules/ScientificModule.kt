@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalContentColor
@@ -384,8 +385,8 @@ private fun SciLayout(
         }
     } else {
         Column(modifier = modifier.fillMaxSize()) {
-            SciGlassCard(Modifier.fillMaxWidth().weight(0.32f), display)
-            SciGlassCard(Modifier.fillMaxWidth().weight(0.68f).padding(top = 12.dp), keypad)
+            SciGlassCard(Modifier.fillMaxWidth().weight(0.28f), display)
+            SciGlassCard(Modifier.fillMaxWidth().weight(0.72f).padding(top = 12.dp), keypad)
         }
     }
 }
@@ -483,17 +484,17 @@ private fun BoxScope.SciKeypad(
     state: ScientificModuleState,
     onIntent: (ModuleIntent) -> Unit,
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 4.dp)) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 6.dp)) {
         Column(
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             SciWheel1(state, onIntent, Modifier.fillMaxWidth())
             SciWheel2(onIntent, Modifier.fillMaxWidth())
 
             Column(
                 modifier = Modifier.fillMaxWidth().weight(1f),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 SciKeyRow(Modifier.weight(1f)) {
                     SciKey("MODE", SciKeyVariant.Mode) {
@@ -581,7 +582,7 @@ private fun BoxScope.SciKeypad(
                 }
             }
 
-            SciKeyRow(Modifier.height(50.dp)) {
+            SciKeyRow(Modifier.height(56.dp)) {
                 SciKey("AC", SciKeyVariant.Clear) { onIntent(ModuleIntent.Clear) }
                 if (state.shiftMode) {
                     SciKey("DEL", SciKeyVariant.Clear) { onIntent(ModuleIntent.Clear) }
@@ -653,14 +654,14 @@ private fun SciWheel1(
             val sendToken = if (shiftMode && item.shiftToken != null) item.shiftToken else item.token
             val displayLabel = if (shiftMode && item.shiftLabel != null) item.shiftLabel else item.label
             GlassPillButton(
-                modifier = Modifier.height(30.dp),
-                cornerRadius = 10.dp,
+                modifier = Modifier.height(48.dp).widthIn(min = 58.dp).padding(horizontal = 20.dp),
+                cornerRadius = 14.dp,
                 onClick = { onIntent(ModuleIntent.Input(sendToken)) },
             ) {
                 CompositionLocalProvider(LocalContentColor provides fg) {
                     Text(
                         displayLabel,
-                        fontSize = 12.sp,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = LocalContentColor.current,
                     )
@@ -710,14 +711,14 @@ private fun SciWheel2(onIntent: (ModuleIntent) -> Unit, modifier: Modifier = Mod
                 else -> Color(0xFFAD1457)
             }
             GlassPillButton(
-                modifier = Modifier.height(28.dp),
-                cornerRadius = 10.dp,
+                modifier = Modifier.height(48.dp).widthIn(min = 58.dp).padding(horizontal = 20.dp),
+                cornerRadius = 14.dp,
                 onClick = { onIntent(ModuleIntent.Input(item.token)) },
             ) {
                 CompositionLocalProvider(LocalContentColor provides fg) {
                     Text(
                         item.label,
-                        fontSize = 12.sp,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = LocalContentColor.current,
                     )
@@ -742,7 +743,7 @@ private fun SciKeyRow(
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) { content() }
 }
@@ -816,10 +817,10 @@ private fun RowScope.SciKey(
     }
 
     val baseFont = when {
-        label.length >= 4 -> 11.sp
-        label.length >= 3 -> 12.sp
-        label.length == 2 -> 14.sp
-        else -> 17.sp
+        label.length >= 4 -> 12.sp
+        label.length >= 3 -> 13.sp
+        label.length == 2 -> 15.sp
+        else -> 18.sp
     }
     val weight = if (label.length >= 2) FontWeight.SemiBold else FontWeight.Medium
     val shape = RoundedCornerShape(14.dp)
@@ -951,7 +952,7 @@ private fun RowScope.SciClearKey(
     ) {
         Text(
             "⌫",
-            fontSize = 19.sp,
+            fontSize = 21.sp,
             fontWeight = FontWeight.SemiBold,
             color = clearColor,
             textAlign = TextAlign.Center,
