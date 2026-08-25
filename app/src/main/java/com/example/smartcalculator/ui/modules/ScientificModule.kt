@@ -91,6 +91,7 @@ data class ScientificModuleState(
     val display: String = "0",
     val expression: String = "",
     val cursorPos: Int = 0,
+    val cursorInBase: Boolean = false,
     val radianMode: Boolean = true,
     val shiftMode: Boolean = false,
     val justEvaluated: Boolean = false,
@@ -105,13 +106,17 @@ data class ScientificModuleState(
 
 // 所有不可分割的 token（按长度降序排列）
 private val ATOMIC_TOKENS: List<String> = listOf(
+    "log_10(", "log_2(", "log_e(",
     "*10^(",
     "asinh(", "acosh(", "atanh(",
     "sinh(", "cosh(", "tanh(", "asin(", "acos(", "atan(",
-    "sin(", "cos(", "tan(", "log(", "exp(", "abs(",
-    "sqrt(", "ln(",
+    "sin(", "cos(", "tan(", "ln(", "exp(", "abs(",
+    "sqrt(",
     "sqrt2", "phi", "pi", "ans",
 )
+
+// log 函数的识别前缀（用于动态匹配 log_N( 格式）
+private val LOG_BASE_PREFIX = "log_"
 
 // 解析表达式为 token 列表，每个 token 记录其字符范围
 private data class DisplayToken(val text: String, val start: Int, val end: Int)
@@ -121,6 +126,17 @@ private fun parseToDisplayTokens(expr: String): List<DisplayToken> {
     val tokens = mutableListOf<DisplayToken>()
     var i = 0
     while (i < expr.length) {
+        // 尝试匹配 log_N( 格式（动态底数）
+        if (i + 4 < expr.length && expr.substring(i, i + 4) == LOG_BASE_PREFIX) {
+            var j = i + 4
+            while (j < expr.length && (expr[j].isDigit() || expr[j] == '.' || expr[j].isLetter())) j++
+            if (j < expr.length && expr[j] == '(') {
+                val fullToken = expr.substring(i, j + 1)
+                tokens.add(DisplayToken(fullToken, i, j + 1))
+                i = j + 1
+                continue
+            }
+        }
         // 尝试匹配多字符 token（最长匹配优先）
         var matched = false
         for (tok in ATOMIC_TOKENS) {
@@ -132,7 +148,6 @@ private fun parseToDisplayTokens(expr: String): List<DisplayToken> {
             }
         }
         if (!matched) {
-            // 数字、运算符、括号等单字符 token
             tokens.add(DisplayToken(expr[i].toString(), i, i + 1))
             i++
         }
@@ -170,7 +185,11 @@ internal fun reduceScientific(
     is ModuleIntent.Custom -> when (intent.key) {
         "sci:mode" -> state.copy(radianMode = !state.radianMode)
         "sci:shift" -> state.copy(shiftMode = !state.shiftMode)
-        "sci:moveCursor" -> state.copy(cursorPos = (intent.payload as? Int) ?: state.expression.length)
+        "sci:insertLog" -> state.insertLog()
+        "sci:moveCursor" -> {
+            val pos = (intent.payload as? Int) ?: state.expression.length
+            state.copy(cursorPos = pos, cursorInBase = state.isCursorInBase(pos))
+        }
         "sci:store" -> {
             val v = state.display.toDoubleOrNull() ?: return state
             state.copy(
@@ -189,33 +208,115 @@ internal fun reduceScientific(
 private val OPERATOR_CHARS = setOf('+', '-', '*', '/', '^')
 private val SINGLE_OPS = setOf("+", "-", "*", "/", "^", "!")
 
+// ============ log 底数编辑支持 ============
+
+private fun ScientificModuleState.insertLog(): ScientificModuleState {
+    val defaultLog = "log_("
+    val newExpr = if (expression.isEmpty() || justEvaluated) {
+        defaultLog
+    } else {
+        val pos = cursorPos.coerceIn(0, expression.length)
+        expression.substring(0, pos) + defaultLog + expression.substring(pos)
+    }
+    val newPos = if (expression.isEmpty() || justEvaluated) {
+        4 // 光标在 _ 后面，( 前面
+    } else {
+        val pos = cursorPos.coerceIn(0, expression.length)
+        pos + 4 // 光标在插入位置的 log_( 的 ( 前面
+    }
+    return copy(
+        expression = newExpr,
+        display = newExpr,
+        cursorPos = newPos,
+        cursorInBase = true,
+        justEvaluated = false,
+        errorMsg = null,
+    )
+}
+
+private fun ScientificModuleState.isCursorInBase(pos: Int): Boolean {
+    val tokens = parseToDisplayTokens(expression)
+    for (token in tokens) {
+        if (token.text.startsWith("log_") && token.text.endsWith("(")) {
+            val baseStart = token.start + 4 // 跳过 "log_"
+            val baseEnd = token.end - 1 // 跳过 "("
+            if (pos in baseStart until baseEnd) return true
+        }
+    }
+    return false
+}
+
+private fun ScientificModuleState.updateLogBase(newBase: String): ScientificModuleState {
+    val tokens = parseToDisplayTokens(expression)
+    var expr = expression
+    var offset = 0
+    for (token in tokens) {
+        if (token.text.startsWith("log_") && token.text.endsWith("(")) {
+            val baseStart = token.start + 4 + offset // "+4" 跳过 "log_"
+            val baseEnd = token.end - 1 + offset // "-1" 跳过 "("
+            val before = expr.substring(0, baseStart)
+            val after = expr.substring(baseEnd)
+            val replaced = before + newBase + after
+            val newCursor = before.length + newBase.length
+            return copy(
+                expression = replaced,
+                display = replaced,
+                cursorPos = newCursor,
+                cursorInBase = true,
+                errorMsg = null,
+            )
+        }
+    }
+    return this
+}
+
+// ============ 通用输入逻辑 ============
+
 private fun ScientificModuleState.inputToken(token: String): ScientificModuleState {
     if (errorMsg != null) {
-        return copy(errorMsg = null, display = token, expression = token, cursorPos = token.length, justEvaluated = false)
+        return copy(errorMsg = null, display = token, expression = token, cursorPos = token.length, justEvaluated = false, cursorInBase = false)
     }
 
-    // 如果刚刚计算完，替换整个表达式
+    // 如果刚刚计算完，且不是 log 插入，替换整个表达式
     if (justEvaluated) {
+        if (token == "log") return insertLog()
         return copy(
             expression = token,
             display = token,
             cursorPos = token.length,
+            cursorInBase = false,
             justEvaluated = false,
             errorMsg = null,
         )
     }
 
+    // 在 log 底数区域输入
+    if (cursorInBase) {
+        return handleLogBaseInput(token)
+    }
+
+    // 特殊按键：log → 插入 log_10( 
+    if (token == "log") {
+        return insertLog()
+    }
+
+    // 特殊按键：( → 如果前面是 log_XXX(，切换到参数区
+    if (token == "(" && cursorPos > 0) {
+        val beforeChar = expression[cursorPos - 1]
+        if (beforeChar == '(' && cursorInBase) {
+            // 已在 log 的参数区
+        }
+    }
+
     var expr = expression
     var pos = cursorPos.coerceIn(0, expr.length)
 
-    // 容错 1：运算符替换（如果光标前一个字符是运算符，新 token 也是运算符，则替换）
+    // 容错 1：运算符替换
     if (token.length == 1 && token[0] in OPERATOR_CHARS && pos > 0) {
         val charBefore = expr[pos - 1]
         if (charBefore in OPERATOR_CHARS || charBefore == '!') {
-            // 回退光标前的运算符
             expr = expr.removeRange(pos - 1, pos)
             pos -= 1
-            // 避免出现 "5+-" 这种情况，改为 "5-"
             if (pos > 0 && expr[pos - 1] in OPERATOR_CHARS) {
                 expr = expr.removeRange(pos - 1, pos)
                 pos -= 1
@@ -226,6 +327,7 @@ private fun ScientificModuleState.inputToken(token: String): ScientificModuleSta
                 expression = newExpr,
                 display = newExpr,
                 cursorPos = newPos,
+                cursorInBase = false,
                 justEvaluated = false,
                 errorMsg = null,
             )
@@ -239,36 +341,142 @@ private fun ScientificModuleState.inputToken(token: String): ScientificModuleSta
         if ('.' in lastSegment) return this
     }
 
-    // 容错 3：避免在空表达式时输入运算符（除了负号）
+    // 容错 3：避免在空表达式时输入运算符
     if (expr.isEmpty() && token.length == 1 && token[0] in setOf('+', '*', '/', '^')) {
         return this
     }
 
+    // 容错 4：输入 ( 时，如果光标前是 log_XXX，切换到参数区
+    if (token == "(" && pos > 4) {
+        val prefix = expr.substring((pos - 5).coerceAtLeast(0), pos)
+        if (prefix.startsWith("log_") && prefix.endsWith("(")) {
+            // 这是 log 的 (，正常插入
+        }
+    }
+
     val newExpr = expr.substring(0, pos) + token + expr.substring(pos)
     val newPos = pos + token.length
+    // 检测新光标位置是否在 log 底数区域
+    val newCursorInBase = isCursorInBase(newPos)
     return copy(
         expression = newExpr,
         display = newExpr,
         cursorPos = newPos,
+        cursorInBase = newCursorInBase,
         justEvaluated = false,
         errorMsg = null,
     )
+}
+
+// 处理 log 底数区域的输入
+private fun ScientificModuleState.handleLogBaseInput(token: String): ScientificModuleState {
+    val tokens = parseToDisplayTokens(expression)
+    for (tk in tokens) {
+        if (tk.text.startsWith("log_") && tk.text.endsWith("(")) {
+            val baseStart = tk.start + 4
+            val baseEnd = tk.end - 1
+            if (cursorPos in baseStart..baseEnd) {
+                val currentBase = expression.substring(baseStart, baseEnd)
+                val isEmptyBase = currentBase.isEmpty()
+                return when {
+                    // 输入数字/字母：替换或追加底数
+                    token.all { it.isDigit() || it == '.' || it.isLetter() } -> {
+                        updateLogBase(currentBase + token)
+                    }
+                    // 底数为空时输入 ( 或运算符：自动补充默认底数 10
+                    (token == "(" || (token.length == 1 && token[0] in setOf('+', '-', '*', '/', '^'))) && isEmptyBase -> {
+                        val updatedBase = updateLogBase("10")
+                        val newExpr = updatedBase.expression.substring(0, updatedBase.cursorPos) + token + updatedBase.expression.substring(updatedBase.cursorPos)
+                        copy(
+                            expression = newExpr,
+                            display = newExpr,
+                            cursorPos = updatedBase.cursorPos + token.length,
+                            cursorInBase = false,
+                            justEvaluated = false,
+                            errorMsg = null,
+                        )
+                    }
+                    // 输入 ( ：退出底数编辑，光标进入参数区
+                    token == "(" -> {
+                        val newExpr = expression.substring(0, cursorPos) + token + expression.substring(cursorPos)
+                        copy(
+                            expression = newExpr,
+                            display = newExpr,
+                            cursorPos = cursorPos + token.length,
+                            cursorInBase = false,
+                            justEvaluated = false,
+                            errorMsg = null,
+                        )
+                    }
+                    // 输入运算符：退出底数编辑
+                    token.length == 1 && token[0] in setOf('+', '-', '*', '/', '^') -> {
+                        val newExpr = expression.substring(0, cursorPos) + token + expression.substring(cursorPos)
+                        copy(
+                            expression = newExpr,
+                            display = newExpr,
+                            cursorPos = cursorPos + token.length,
+                            cursorInBase = false,
+                            justEvaluated = false,
+                            errorMsg = null,
+                        )
+                    }
+                    // 其他情况：退出底数编辑
+                    else -> {
+                        val newExpr = expression.substring(0, cursorPos) + token + expression.substring(cursorPos)
+                        copy(
+                            expression = newExpr,
+                            display = newExpr,
+                            cursorPos = cursorPos + token.length,
+                            cursorInBase = false,
+                            justEvaluated = false,
+                            errorMsg = null,
+                        )
+                    }
+                }
+            }
+        }
+    }
+    return this
 }
 
 private fun ScientificModuleState.backspaceToken(): ScientificModuleState {
     val pos = cursorPos.coerceIn(0, expression.length)
     if (pos == 0) return this
 
+    // 如果在 log 底数区域，特殊处理
+    if (cursorInBase) {
+        val tokens = parseToDisplayTokens(expression)
+        for (token in tokens) {
+            if (token.text.startsWith("log_") && token.text.endsWith("(")) {
+                val baseStart = token.start + 4
+                val baseEnd = token.end - 1
+                if (pos in baseStart..baseEnd) {
+                    val currentBase = expression.substring(baseStart, baseEnd)
+                    // 底数为空，删除整个 log_( token
+                    if (currentBase.isEmpty()) {
+                        val newExpr = expression.substring(0, token.start) + expression.substring(token.end)
+                        val newDisplay = if (newExpr.isEmpty()) "0" else newExpr
+                        return copy(expression = newExpr, display = newDisplay, cursorPos = token.start, cursorInBase = false, errorMsg = null)
+                    }
+                    // 删除最后一位
+                    val newBase = currentBase.dropLast(1)
+                    val newState = updateLogBase(newBase)
+                    return newState.copy(cursorPos = newState.cursorPos, cursorInBase = true)
+                }
+            }
+        }
+    }
+
     val exprBefore = expression.substring(0, pos)
     val exprAfter = expression.substring(pos)
 
-    // 检查光标前是否有完整 token（如 sin(、pi 等），如果有则整块删除
+    // 检查光标前是否有完整 token
     for (tok in ATOMIC_TOKENS) {
         if (exprBefore.endsWith(tok)) {
             val newExpr = exprBefore.dropLast(tok.length) + exprAfter
             val newPos = pos - tok.length
             val newDisplay = if (newExpr.isEmpty()) "0" else newExpr
-            return copy(expression = newExpr, display = newDisplay, cursorPos = newPos, errorMsg = null)
+            return copy(expression = newExpr, display = newDisplay, cursorPos = newPos, cursorInBase = false, errorMsg = null)
         }
     }
 
@@ -276,7 +484,8 @@ private fun ScientificModuleState.backspaceToken(): ScientificModuleState {
     val newExpr = exprBefore.dropLast(1) + exprAfter
     val newPos = (pos - 1).coerceAtLeast(0)
     val newDisplay = if (newExpr.isEmpty()) "0" else newExpr
-    return copy(expression = newExpr, display = newDisplay, cursorPos = newPos, errorMsg = null)
+    val newCursorInBase = isCursorInBase(newPos)
+    return copy(expression = newExpr, display = newDisplay, cursorPos = newPos, cursorInBase = newCursorInBase, errorMsg = null)
 }
 
 private fun dropLastSciToken(s: String): String {
@@ -348,6 +557,18 @@ private object SciEvaluator {
             val c = input[i]
             when {
                 c.isWhitespace() -> i++
+                // 特殊处理：log_N( 格式（如 log_10(、log_2(、log_e(）
+                i + 4 < input.length && input.substring(i, i + 4) == "log_" -> {
+                    var j = i + 4
+                    while (j < input.length && (input[j].isDigit() || input[j] == '.' || input[j].isLetter())) j++
+                    if (j < input.length && input[j] == '(') {
+                        val fullToken = input.substring(i, j + 1)
+                        tokens.add(fullToken)
+                        i = j + 1
+                    } else {
+                        throw IllegalArgumentException("log 函数格式错误，应为 log_底数(...)")
+                    }
+                }
                 c.isDigit() || c == '.' -> {
                     val start = i
                     if (c == '.') i++
@@ -368,13 +589,9 @@ private object SciEvaluator {
                     while (i < input.length && (input[i].isLetter() || input[i].isDigit())) i++
                     val word = input.substring(start, i).lowercase()
                     val originalWord = input.substring(start, i)
-                    // 检查是否紧跟 "("
                     val hasParen = i < input.length && input[i] == '('
-                    // 尝试匹配常量或函数
                     when {
-                        // 特殊长 token：sqrt2 (5字符，不以括号结尾)
                         word == "sqrt2" -> { tokens.add("sqrt2") }
-                        // 带括号的函数：直接组合 word + "("
                         hasParen -> {
                             val fullToken = word + "("
                             when (fullToken) {
@@ -383,24 +600,19 @@ private object SciEvaluator {
                                 "sin_d(", "cos_d(", "tan_d(", "asin_d(", "acos_d(", "atan_d(",
                                 "ln(", "log(", "exp(", "sqrt(", "abs(" -> {
                                     tokens.add(fullToken)
-                                    i++ // 跳过 '('
+                                    i++
                                 }
                                 else -> {
-                                    // word 后面跟了 ( 但不是已知函数，可能是隐式乘法 sin( 但 sin 不是函数？
-                                    // 回退：把 word 当普通 token
                                     tokens.add(originalWord)
                                 }
                             }
                         }
-                        // 常量/变量识别（不带括号）
                         word == "pi" -> { tokens.add("pi") }
                         word == "phi" -> { tokens.add("phi") }
                         word == "ans" -> { tokens.add("ans") }
-                        // 单个变量 A-Z
                         originalWord.length == 1 && originalWord in VAR_TOKENS -> {
                             tokens.add(originalWord)
                         }
-                        // 独立 'e' (自然对数底)
                         word == "e" -> { tokens.add("e") }
                         else -> throw IllegalArgumentException("未知标识符: $originalWord")
                     }
@@ -449,6 +661,7 @@ private object SciEvaluator {
 
     private fun isStartLike(t: String): Boolean {
         if (t == "(") return true
+        if (t.startsWith("log_")) return true
         if (t.startsWith("sin(") || t.startsWith("cos(") || t.startsWith("tan(")) return true
         if (t.startsWith("asin(") || t.startsWith("acos(") || t.startsWith("atan(")) return true
         if (t.startsWith("sinh(") || t.startsWith("cosh(") || t.startsWith("tanh(")) return true
@@ -470,12 +683,13 @@ private object SciEvaluator {
         s = s.replace("×", "*").replace("÷", "/")
         s = s.replace("×10^", "10^")
         if (!radianMode) {
-            s = s.replace(Regex("""sin\("""), "sin_d(")
-            s = s.replace(Regex("""cos\("""), "cos_d(")
-            s = s.replace(Regex("""tan\("""), "tan_d(")
-            s = s.replace(Regex("""asin\("""), "asin_d(")
-            s = s.replace(Regex("""acos\("""), "acos_d(")
-            s = s.replace(Regex("""atan\("""), "atan_d(")
+            // 不替换 log_ 开头的（它们用 _ 分隔底数）
+            s = s.replace(Regex("""(?<!_)sin\("""), "sin_d(")
+            s = s.replace(Regex("""(?<!_)cos\("""), "cos_d(")
+            s = s.replace(Regex("""(?<!_)tan\("""), "tan_d(")
+            s = s.replace(Regex("""(?<!_)asin\("""), "asin_d(")
+            s = s.replace(Regex("""(?<!_)acos\("""), "acos_d(")
+            s = s.replace(Regex("""(?<!_)atan\("""), "atan_d(")
         }
         return s
     }
@@ -571,6 +785,7 @@ private object SciEvaluator {
                 t.startsWith("acos_d(") -> parseFunc(t) { a -> acos(a) * 180.0 / PI }
                 t.startsWith("atan_d(") -> parseFunc(t) { a -> atan(a) * 180.0 / PI }
                 t.startsWith("ln(") -> parseFunc(t) { a -> ln(a) }
+                t.startsWith("log_") && t.endsWith("(") -> parseLogBase(t)
                 t.startsWith("log(") -> parseFunc(t) { a -> log10(a) }
                 t.startsWith("exp(") -> parseFunc(t) { a -> exp(a) }
                 t.startsWith("sqrt(") -> parseFunc(t) { a -> sqrt(a) }
@@ -586,6 +801,29 @@ private object SciEvaluator {
                 throw IllegalArgumentException("${token.dropLast(1)} 缺少右括号")
             pos++
             return fn(arg)
+        }
+
+        private fun parseLogBase(token: String): Double {
+            // token 格式: log_N( 或 log_(，其中 N 是底数，空则默认 10
+            val baseStr = token.removePrefix("log_").removeSuffix("(")
+            val base = when {
+                baseStr.isEmpty() -> 10.0  // 默认常用对数 lg
+                baseStr == "e" -> exp(1.0)
+                baseStr == "pi" -> PI
+                else -> baseStr.toDoubleOrNull()
+                    ?: throw IllegalArgumentException("无法解析 log 底数: $baseStr")
+            }
+            if (base <= 0 || base == 1.0)
+                throw IllegalArgumentException("log 底数必须大于 0 且不等于 1")
+            pos++
+            val arg = parseExpr()
+            if (pos >= tokens.size || tokens[pos] != ")")
+                throw IllegalArgumentException("${token.dropLast(1)} 缺少右括号")
+            pos++
+            // log_b(x) = ln(x) / ln(b)
+            val lnBase = ln(base)
+            if (abs(lnBase) < 1e-15) throw IllegalArgumentException("log 底数无效")
+            return ln(arg) / lnBase
         }
 
         private fun factorial(n: Double): Double {
@@ -773,10 +1011,38 @@ private fun BoxScope.SciDisplay(state: ScientificModuleState, onIntent: (ModuleI
                     Spacer(Modifier.width(1.dp))
                 } else {
                     tokens.forEachIndexed { index, token ->
-                        Text(
-                            text = token.text,
-                            style = exprStyle,
-                        )
+                        if (token.text.startsWith("log_") && token.text.endsWith("(")) {
+                            val baseStr = token.text.substring(4, token.text.length - 1)
+                            val subStyle = exprStyle.copy(
+                                fontSize = exprStyle.fontSize * 0.65f
+                            )
+                            Text(
+                                text = "log",
+                                style = exprStyle,
+                            )
+                            if (baseStr.isEmpty()) {
+                                // 空底数显示占位符，引导用户输入
+                                Text(
+                                    text = "_",
+                                    style = subStyle,
+                                    color = LocalContentColor.current.copy(alpha = 0.4f),
+                                )
+                            } else {
+                                Text(
+                                    text = baseStr,
+                                    style = subStyle,
+                                )
+                            }
+                            Text(
+                                text = "(",
+                                style = exprStyle,
+                            )
+                        } else {
+                            Text(
+                                text = token.text,
+                                style = exprStyle,
+                            )
+                        }
                     }
                 }
             }
@@ -793,7 +1059,7 @@ private fun BoxScope.SciDisplay(state: ScientificModuleState, onIntent: (ModuleI
     }
 }
 
-// 计算光标 x 坐标（基于 token 宽度累加）
+// 计算光标 x 坐标（基于 token 宽度累加，支持 log 下标渲染）
 private fun calculateCursorX(
     cursorPos: Int,
     tokens: List<DisplayToken>,
@@ -802,18 +1068,50 @@ private fun calculateCursorX(
 ): Float {
     if (tokens.isEmpty()) return 0f
     val targetPos = cursorPos.coerceIn(0, tokens.last().end)
-    // 累加 token 宽度直到达到光标位置
     var x = 0f
     for (token in tokens) {
         val tokenEnd = token.end
-        val tokenWidth = estimateTextWidth(token.text, style, density)
-        if (tokenEnd <= targetPos) {
-            x += tokenWidth
+        if (token.text.startsWith("log_") && token.text.endsWith("(")) {
+            val baseStr = token.text.substring(4, token.text.length - 1)
+            val baseLen = baseStr.length
+            val displayBase = if (baseStr.isEmpty()) "_" else baseStr
+            val subStyle = style.copy(fontSize = style.fontSize * 0.65f)
+            val logWidth = estimateTextWidth("log", style, density)
+            val baseWidth = estimateTextWidth(displayBase, subStyle, density)
+            val parenWidth = estimateTextWidth("(", style, density)
+            val fullLogWidth = logWidth + baseWidth + parenWidth
+
+            if (tokenEnd <= targetPos) {
+                x += fullLogWidth
+            } else {
+                val relPos = (targetPos - token.start).coerceIn(0, token.text.length)
+                when {
+                    relPos <= 4 -> x += estimateTextWidth(token.text.substring(0, relPos), style, density)
+                    relPos <= 4 + baseLen -> {
+                        if (baseLen == 0) {
+                            // 空底数，光标在底数区域
+                            x += logWidth + baseWidth
+                        } else {
+                            val subPos = relPos - 4
+                            x += logWidth + estimateTextWidth(baseStr.substring(0, subPos.coerceIn(0, baseLen)), subStyle, density)
+                        }
+                    }
+                    else -> {
+                        val parenPos = relPos - 4 - baseLen
+                        x += logWidth + baseWidth + estimateTextWidth("(".substring(0, parenPos.coerceIn(0, 1)), style, density)
+                    }
+                }
+                return x
+            }
         } else {
-            // 光标在 token 内部或 token 边界
-            val relativePos = (targetPos - token.start).coerceIn(0, token.text.length)
-            x += estimateTextWidth(token.text.substring(0, relativePos), style, density)
-            return x
+            val tokenWidth = estimateTextWidth(token.text, style, density)
+            if (tokenEnd <= targetPos) {
+                x += tokenWidth
+            } else {
+                val relativePos = (targetPos - token.start).coerceIn(0, token.text.length)
+                x += estimateTextWidth(token.text.substring(0, relativePos), style, density)
+                return x
+            }
         }
     }
     return x
@@ -822,11 +1120,11 @@ private fun calculateCursorX(
 // 估算文本宽度（等宽字体近似）
 private fun estimateTextWidth(text: String, style: TextStyle, density: Density): Float {
     val fontSizePx = with(density) { style.fontSize.toPx() }
-    val charWidth = fontSizePx * 0.6f // 等宽字体约 0.6 倍字号
+    val charWidth = fontSizePx * 0.6f
     return text.length * charWidth
 }
 
-// 点击位置命中测试：找到最接近点击 x 的字符位置
+// 点击位置命中测试：找到最接近点击 x 的字符位置（支持 log 下标）
 private fun hitTestTokenAtPosition(
     clickX: Float,
     tokens: List<DisplayToken>,
@@ -835,21 +1133,58 @@ private fun hitTestTokenAtPosition(
 ): Int {
     if (tokens.isEmpty()) return 0
     var x = 0f
-    // 累加 token 宽度，找到点击位置对应的 token
     for (token in tokens) {
-        val tokenWidth = estimateTextWidth(token.text, style, density)
-        val tokenCenter = x + tokenWidth / 2f
-        if (clickX <= tokenCenter) {
-            // 点击在这个 token 的前半部分，光标在 token 前
-            return token.start
+        if (token.text.startsWith("log_") && token.text.endsWith("(")) {
+            val baseStr = token.text.substring(4, token.text.length - 1)
+            val baseLen = baseStr.length
+            val displayBase = if (baseStr.isEmpty()) "_" else baseStr
+            val subStyle = style.copy(fontSize = style.fontSize * 0.65f)
+            val logWidth = estimateTextWidth("log", style, density)
+            val baseWidth = estimateTextWidth(displayBase, subStyle, density)
+            val parenWidth = estimateTextWidth("(", style, density)
+            val fullWidth = logWidth + baseWidth + parenWidth
+
+            val logStartX = x
+            val logEndX = x + logWidth
+            val baseStartX = logEndX
+            val baseEndX = logEndX + baseWidth
+            val parenStartX = baseEndX
+            val parenEndX = baseEndX + parenWidth
+
+            when {
+                clickX <= logEndX -> {
+                    if (clickX <= (logStartX + logEndX) / 2f) return token.start
+                    else return token.start + 4
+                }
+                clickX <= baseEndX -> {
+                    if (baseLen == 0) {
+                        // 空底数，点击在底数区域中间
+                        return token.start + 4
+                    }
+                    val relX = (clickX - baseStartX).coerceIn(0f, baseWidth)
+                    val charWidth = baseWidth / baseLen
+                    val charIndex = (relX / charWidth).toInt().coerceIn(0, baseLen - 1)
+                    return token.start + 4 + charIndex + 1
+                }
+                clickX <= parenEndX -> {
+                    return token.start + 4 + baseLen
+                }
+                else -> {
+                    x += fullWidth
+                }
+            }
+        } else {
+            val tokenWidth = estimateTextWidth(token.text, style, density)
+            val tokenCenter = x + tokenWidth / 2f
+            if (clickX <= tokenCenter) {
+                return token.start
+            }
+            if (clickX <= x + tokenWidth) {
+                return token.end
+            }
+            x += tokenWidth
         }
-        if (clickX <= x + tokenWidth) {
-            // 点击在这个 token 的后半部分，光标在 token 后
-            return token.end
-        }
-        x += tokenWidth
     }
-    // 点击在所有 token 之后
     return tokens.last().end
 }
 
@@ -988,7 +1323,13 @@ private fun SciWheel1(
             SciWheelButton(
                 label = displayLabel,
                 fgColor = fg,
-                onClick = { onIntent(ModuleIntent.Input(sendToken)) },
+                onClick = {
+                    if (!shiftMode && item.label == "log") {
+                        onIntent(ModuleIntent.Custom("sci:insertLog"))
+                    } else {
+                        onIntent(ModuleIntent.Input(sendToken))
+                    }
+                },
             )
         }
     }
