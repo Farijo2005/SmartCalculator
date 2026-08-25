@@ -24,6 +24,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.tween
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -44,11 +47,16 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -82,6 +90,7 @@ private fun tanh(x: Double): Double = sinh(x) / cosh(x)
 data class ScientificModuleState(
     val display: String = "0",
     val expression: String = "",
+    val cursorPos: Int = 0,
     val radianMode: Boolean = true,
     val shiftMode: Boolean = false,
     val justEvaluated: Boolean = false,
@@ -94,21 +103,57 @@ data class ScientificModuleState(
 //  Token Lists for Backspace (longest-match first)
 // ============================================================
 
-private val FUNC_TOKENS: List<String> = listOf(
+// 所有不可分割的 token（按长度降序排列）
+private val ATOMIC_TOKENS: List<String> = listOf(
     "*10^(",
     "asinh(", "acosh(", "atanh(",
     "sinh(", "cosh(", "tanh(", "asin(", "acos(", "atan(",
     "sin(", "cos(", "tan(", "log(", "exp(", "abs(",
     "sqrt(", "ln(",
+    "sqrt2", "phi", "pi", "ans",
 )
 
-private val CONST_TOKENS: List<String> = listOf(
-    "pi", "phi", "sqrt2",
-)
+// 解析表达式为 token 列表，每个 token 记录其字符范围
+private data class DisplayToken(val text: String, val start: Int, val end: Int)
 
-private val VAR_TOKENS: List<String> = listOf(
-    "ans",
-)
+private fun parseToDisplayTokens(expr: String): List<DisplayToken> {
+    if (expr.isEmpty()) return emptyList()
+    val tokens = mutableListOf<DisplayToken>()
+    var i = 0
+    while (i < expr.length) {
+        // 尝试匹配多字符 token（最长匹配优先）
+        var matched = false
+        for (tok in ATOMIC_TOKENS) {
+            if (i + tok.length <= expr.length && expr.substring(i, i + tok.length) == tok) {
+                tokens.add(DisplayToken(tok, i, i + tok.length))
+                i += tok.length
+                matched = true
+                break
+            }
+        }
+        if (!matched) {
+            // 数字、运算符、括号等单字符 token
+            tokens.add(DisplayToken(expr[i].toString(), i, i + 1))
+            i++
+        }
+    }
+    return tokens
+}
+
+// 将字符位置对齐到最近的 token 边界
+private fun snapToTokenBoundary(charPos: Int, tokens: List<DisplayToken>, preferAfter: Boolean = false): Int {
+    if (tokens.isEmpty()) return 0
+    val pos = charPos.coerceIn(0, tokens.last().end)
+    // 如果点击位置在某个 token 内部，对齐到最近的边界
+    for (token in tokens) {
+        if (pos > token.start && pos < token.end) {
+            val distToStart = pos - token.start
+            val distToEnd = token.end - pos
+            return if (preferAfter) token.end else if (distToStart < distToEnd) token.start else token.end
+        }
+    }
+    return pos
+}
 
 // ============================================================
 //  Reducer
@@ -125,6 +170,7 @@ internal fun reduceScientific(
     is ModuleIntent.Custom -> when (intent.key) {
         "sci:mode" -> state.copy(radianMode = !state.radianMode)
         "sci:shift" -> state.copy(shiftMode = !state.shiftMode)
+        "sci:moveCursor" -> state.copy(cursorPos = (intent.payload as? Int) ?: state.expression.length)
         "sci:store" -> {
             val v = state.display.toDoubleOrNull() ?: return state
             state.copy(
@@ -145,33 +191,41 @@ private val SINGLE_OPS = setOf("+", "-", "*", "/", "^", "!")
 
 private fun ScientificModuleState.inputToken(token: String): ScientificModuleState {
     if (errorMsg != null) {
-        return copy(errorMsg = null, display = token, expression = token, justEvaluated = false)
+        return copy(errorMsg = null, display = token, expression = token, cursorPos = token.length, justEvaluated = false)
     }
 
-    var expr = expression
     // 如果刚刚计算完，替换整个表达式
     if (justEvaluated) {
         return copy(
             expression = token,
             display = token,
+            cursorPos = token.length,
             justEvaluated = false,
             errorMsg = null,
         )
     }
 
-    // 容错 1：运算符替换（如果最后一个字符是运算符，新 token 也是运算符，则替换）
-    if (token.length == 1 && token[0] in OPERATOR_CHARS && expr.isNotEmpty()) {
-        val lastChar = expr.last()
-        if (lastChar in OPERATOR_CHARS || lastChar == '!') {
-            // 回退最后一个运算符
-            expr = expr.dropLast(1)
+    var expr = expression
+    var pos = cursorPos.coerceIn(0, expr.length)
+
+    // 容错 1：运算符替换（如果光标前一个字符是运算符，新 token 也是运算符，则替换）
+    if (token.length == 1 && token[0] in OPERATOR_CHARS && pos > 0) {
+        val charBefore = expr[pos - 1]
+        if (charBefore in OPERATOR_CHARS || charBefore == '!') {
+            // 回退光标前的运算符
+            expr = expr.removeRange(pos - 1, pos)
+            pos -= 1
             // 避免出现 "5+-" 这种情况，改为 "5-"
-            if (expr.isNotEmpty() && expr.last() in OPERATOR_CHARS) {
-                expr = expr.dropLast(1)
+            if (pos > 0 && expr[pos - 1] in OPERATOR_CHARS) {
+                expr = expr.removeRange(pos - 1, pos)
+                pos -= 1
             }
+            val newExpr = expr.substring(0, pos) + token + expr.substring(pos)
+            val newPos = pos + token.length
             return copy(
-                expression = expr + token,
-                display = expr + token,
+                expression = newExpr,
+                display = newExpr,
+                cursorPos = newPos,
                 justEvaluated = false,
                 errorMsg = null,
             )
@@ -179,41 +233,54 @@ private fun ScientificModuleState.inputToken(token: String): ScientificModuleSta
     }
 
     // 容错 2：小数点防重复
-    if (token == "." && expr.isNotEmpty()) {
-        // 找到最后一个运算符后的所有字符，检查是否已包含小数点
-        val lastSegment = expr.split(Regex("[+\\-*/^()!]")).lastOrNull() ?: ""
-        if ('.' in lastSegment) return this // 已有小数点，忽略
+    if (token == "." && pos > 0) {
+        val beforeCursor = expr.substring(0, pos)
+        val lastSegment = beforeCursor.split(Regex("[+\\-*/^()!]")).lastOrNull() ?: ""
+        if ('.' in lastSegment) return this
     }
 
     // 容错 3：避免在空表达式时输入运算符（除了负号）
     if (expr.isEmpty() && token.length == 1 && token[0] in setOf('+', '*', '/', '^')) {
-        return this // 忽略非法起始
+        return this
     }
 
-    val newExpr = expr + token
+    val newExpr = expr.substring(0, pos) + token + expr.substring(pos)
+    val newPos = pos + token.length
     return copy(
         expression = newExpr,
         display = newExpr,
+        cursorPos = newPos,
         justEvaluated = false,
         errorMsg = null,
     )
 }
 
 private fun ScientificModuleState.backspaceToken(): ScientificModuleState {
-    if (expression.isEmpty()) return this
-    val dropped = dropLastSciToken(expression)
-    val newDisplay = if (dropped.isEmpty()) "0" else dropped
-    return copy(expression = dropped, display = newDisplay, errorMsg = null)
+    val pos = cursorPos.coerceIn(0, expression.length)
+    if (pos == 0) return this
+
+    val exprBefore = expression.substring(0, pos)
+    val exprAfter = expression.substring(pos)
+
+    // 检查光标前是否有完整 token（如 sin(、pi 等），如果有则整块删除
+    for (tok in ATOMIC_TOKENS) {
+        if (exprBefore.endsWith(tok)) {
+            val newExpr = exprBefore.dropLast(tok.length) + exprAfter
+            val newPos = pos - tok.length
+            val newDisplay = if (newExpr.isEmpty()) "0" else newExpr
+            return copy(expression = newExpr, display = newDisplay, cursorPos = newPos, errorMsg = null)
+        }
+    }
+
+    // 否则删除光标前的一个字符
+    val newExpr = exprBefore.dropLast(1) + exprAfter
+    val newPos = (pos - 1).coerceAtLeast(0)
+    val newDisplay = if (newExpr.isEmpty()) "0" else newExpr
+    return copy(expression = newExpr, display = newDisplay, cursorPos = newPos, errorMsg = null)
 }
 
 private fun dropLastSciToken(s: String): String {
-    for (tok in FUNC_TOKENS) {
-        if (s.endsWith(tok)) return s.dropLast(tok.length)
-    }
-    for (tok in CONST_TOKENS) {
-        if (s.endsWith(tok)) return s.dropLast(tok.length)
-    }
-    for (tok in VAR_TOKENS) {
+    for (tok in ATOMIC_TOKENS) {
         if (s.endsWith(tok)) return s.dropLast(tok.length)
     }
     return s.dropLast(1)
@@ -227,12 +294,13 @@ private fun ScientificModuleState.evaluate(): ScientificModuleState {
         copy(
             display = formatted,
             expression = expression,
+            cursorPos = expression.length,
             ans = result,
             justEvaluated = true,
             errorMsg = null,
         )
     } catch (e: Exception) {
-        copy(errorMsg = e.message ?: "计算错误", display = "错误", justEvaluated = true)
+        copy(errorMsg = e.message ?: "计算错误", display = "错误", cursorPos = expression.length, justEvaluated = true)
     }
 }
 
@@ -545,7 +613,7 @@ fun ScientificModule(
     SciLayout(
         isLandscape = isLandscape,
         modifier = modifier,
-        display = { SciDisplay(state) },
+        display = { SciDisplay(state, onIntent) },
         keypad = { SciKeypad(state, onIntent) },
     )
 }
@@ -597,47 +665,56 @@ private fun SciGlassCard(
 // ============================================================
 
 @Composable
-private fun BoxScope.SciDisplay(state: ScientificModuleState) {
+private fun BoxScope.SciDisplay(state: ScientificModuleState, onIntent: (ModuleIntent) -> Unit) {
     val scrollState = rememberScrollState()
-    LaunchedEffect(state.display, state.expression) {
+    val density = LocalDensity.current
+    val cursorColor = MaterialTheme.colorScheme.primary
+
+    var cursorVisible by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            cursorVisible = true
+            kotlinx.coroutines.delay(500)
+            cursorVisible = false
+            kotlinx.coroutines.delay(500)
+        }
+    }
+    val cursorAlpha = if (cursorVisible) 1f else 0f
+
+    val tokens = parseToDisplayTokens(state.expression)
+    val isJustEvaluated = state.justEvaluated
+
+    val exprColor = when {
+        state.errorMsg != null -> Color(0xFFFF3B30)
+        isJustEvaluated -> LocalContentColor.current.copy(alpha = 0.45f)
+        else -> LocalContentColor.current
+    }
+    val resultColor = when {
+        state.errorMsg != null -> Color(0xFFFF3B30)
+        isJustEvaluated -> MaterialTheme.colorScheme.primary
+        else -> LocalContentColor.current.copy(alpha = 0.45f)
+    }
+
+    val exprStyle = MaterialTheme.typography.titleMedium.copy(
+        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+        color = exprColor,
+    )
+    val resultStyle = MaterialTheme.typography.headlineLarge.copy(
+        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+        fontWeight = FontWeight.Bold,
+        color = resultColor,
+    )
+
+    LaunchedEffect(state.expression) {
         scrollState.animateScrollTo(scrollState.maxValue)
     }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.Bottom,
+            .padding(12.dp),
+        verticalArrangement = Arrangement.SpaceBetween,
     ) {
-        val exprText = state.expression.ifBlank { " " }
-        Text(
-            text = exprText,
-            style = MaterialTheme.typography.bodyMedium,
-            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-            color = LocalContentColor.current.copy(alpha = 0.55f),
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(scrollState),
-        )
-        Spacer(Modifier.height(8.dp))
-        val displayText = state.errorMsg ?: state.display
-        val displayColor = when {
-            state.errorMsg != null -> Color(0xFFFF3B30)
-            state.justEvaluated -> MaterialTheme.colorScheme.primary
-            else -> LocalContentColor.current
-        }
-        Text(
-            text = displayText,
-            style = MaterialTheme.typography.headlineMedium.copy(
-                fontWeight = FontWeight.SemiBold,
-            ),
-            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-            color = displayColor,
-            textAlign = TextAlign.End,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(6.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -655,7 +732,125 @@ private fun BoxScope.SciDisplay(state: ScientificModuleState) {
                 )
             }
         }
+
+        // 左上：用户输入表达式（token 级渲染 + 精确光标）
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .pointerInput(state.expression, state.cursorPos, tokens) {
+                    detectTapGestures { offset ->
+                        val charPos = hitTestTokenAtPosition(
+                            offset.x, tokens, exprStyle, density
+                        )
+                        val snappedPos = snapToTokenBoundary(charPos, tokens)
+                        onIntent(ModuleIntent.Custom("sci:moveCursor", snappedPos))
+                    }
+                }
+        ) {
+            val cursorX = calculateCursorX(
+                state.cursorPos, tokens, exprStyle, density
+            )
+            val cursorHeight = with(density) { exprStyle.fontSize.toPx() * 1.2f }
+            val cursorWidth = with(density) { 2.dp.toPx() }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(scrollState)
+                    .drawBehind {
+                        val centerY = size.height / 2f
+                        drawLine(
+                            color = cursorColor.copy(alpha = cursorAlpha),
+                            start = Offset(cursorX, centerY - cursorHeight / 2f),
+                            end = Offset(cursorX, centerY + cursorHeight / 2f),
+                            strokeWidth = cursorWidth,
+                        )
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (tokens.isEmpty()) {
+                    Spacer(Modifier.width(1.dp))
+                } else {
+                    tokens.forEachIndexed { index, token ->
+                        Text(
+                            text = token.text,
+                            style = exprStyle,
+                        )
+                    }
+                }
+            }
+        }
+
+        // 右下：计算结果
+        Text(
+            text = state.errorMsg ?: state.display,
+            style = resultStyle,
+            textAlign = TextAlign.End,
+            modifier = Modifier.fillMaxWidth(),
+            maxLines = 2,
+        )
     }
+}
+
+// 计算光标 x 坐标（基于 token 宽度累加）
+private fun calculateCursorX(
+    cursorPos: Int,
+    tokens: List<DisplayToken>,
+    style: TextStyle,
+    density: Density
+): Float {
+    if (tokens.isEmpty()) return 0f
+    val targetPos = cursorPos.coerceIn(0, tokens.last().end)
+    // 累加 token 宽度直到达到光标位置
+    var x = 0f
+    for (token in tokens) {
+        val tokenEnd = token.end
+        val tokenWidth = estimateTextWidth(token.text, style, density)
+        if (tokenEnd <= targetPos) {
+            x += tokenWidth
+        } else {
+            // 光标在 token 内部或 token 边界
+            val relativePos = (targetPos - token.start).coerceIn(0, token.text.length)
+            x += estimateTextWidth(token.text.substring(0, relativePos), style, density)
+            return x
+        }
+    }
+    return x
+}
+
+// 估算文本宽度（等宽字体近似）
+private fun estimateTextWidth(text: String, style: TextStyle, density: Density): Float {
+    val fontSizePx = with(density) { style.fontSize.toPx() }
+    val charWidth = fontSizePx * 0.6f // 等宽字体约 0.6 倍字号
+    return text.length * charWidth
+}
+
+// 点击位置命中测试：找到最接近点击 x 的字符位置
+private fun hitTestTokenAtPosition(
+    clickX: Float,
+    tokens: List<DisplayToken>,
+    style: TextStyle,
+    density: Density
+): Int {
+    if (tokens.isEmpty()) return 0
+    var x = 0f
+    // 累加 token 宽度，找到点击位置对应的 token
+    for (token in tokens) {
+        val tokenWidth = estimateTextWidth(token.text, style, density)
+        val tokenCenter = x + tokenWidth / 2f
+        if (clickX <= tokenCenter) {
+            // 点击在这个 token 的前半部分，光标在 token 前
+            return token.start
+        }
+        if (clickX <= x + tokenWidth) {
+            // 点击在这个 token 的后半部分，光标在 token 后
+            return token.end
+        }
+        x += tokenWidth
+    }
+    // 点击在所有 token 之后
+    return tokens.last().end
 }
 
 // ============================================================
