@@ -184,6 +184,13 @@ class CalculatorViewModel(application: Application) : AndroidViewModel(applicati
                         )
                     } else s.copy(moduleStates = states)
                 }
+                CalcMode.UnitConversion -> {
+                    val old = states[mode] as? com.example.smartcalculator.ui.modules.UnitConversionModuleState
+                        ?: com.example.smartcalculator.ui.modules.UnitConversionModuleState()
+                    val newState = com.example.smartcalculator.ui.modules.reduceUnitConversion(old, intent)
+                    states[mode] = newState
+                    s.copy(moduleStates = states)
+                }
                 else -> s
             }
         }
