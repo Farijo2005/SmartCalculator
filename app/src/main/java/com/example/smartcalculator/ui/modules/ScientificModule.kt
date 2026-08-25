@@ -140,9 +140,57 @@ internal fun reduceScientific(
     }
 }
 
+private val OPERATOR_CHARS = setOf('+', '-', '*', '/', '^')
+private val SINGLE_OPS = setOf("+", "-", "*", "/", "^", "!")
+
 private fun ScientificModuleState.inputToken(token: String): ScientificModuleState {
-    if (errorMsg != null) return copy(errorMsg = null, display = token, expression = token, justEvaluated = false)
-    val newExpr = if (justEvaluated) token else expression + token
+    if (errorMsg != null) {
+        return copy(errorMsg = null, display = token, expression = token, justEvaluated = false)
+    }
+
+    var expr = expression
+    // 如果刚刚计算完，替换整个表达式
+    if (justEvaluated) {
+        return copy(
+            expression = token,
+            display = token,
+            justEvaluated = false,
+            errorMsg = null,
+        )
+    }
+
+    // 容错 1：运算符替换（如果最后一个字符是运算符，新 token 也是运算符，则替换）
+    if (token.length == 1 && token[0] in OPERATOR_CHARS && expr.isNotEmpty()) {
+        val lastChar = expr.last()
+        if (lastChar in OPERATOR_CHARS || lastChar == '!') {
+            // 回退最后一个运算符
+            expr = expr.dropLast(1)
+            // 避免出现 "5+-" 这种情况，改为 "5-"
+            if (expr.isNotEmpty() && expr.last() in OPERATOR_CHARS) {
+                expr = expr.dropLast(1)
+            }
+            return copy(
+                expression = expr + token,
+                display = expr + token,
+                justEvaluated = false,
+                errorMsg = null,
+            )
+        }
+    }
+
+    // 容错 2：小数点防重复
+    if (token == "." && expr.isNotEmpty()) {
+        // 找到最后一个运算符后的所有字符，检查是否已包含小数点
+        val lastSegment = expr.split(Regex("[+\\-*/^()!]")).lastOrNull() ?: ""
+        if ('.' in lastSegment) return this // 已有小数点，忽略
+    }
+
+    // 容错 3：避免在空表达式时输入运算符（除了负号）
+    if (expr.isEmpty() && token.length == 1 && token[0] in setOf('+', '*', '/', '^')) {
+        return this // 忽略非法起始
+    }
+
+    val newExpr = expr + token
     return copy(
         expression = newExpr,
         display = newExpr,
@@ -201,22 +249,151 @@ private fun Double.formatSci(): String {
 // ============================================================
 
 private object SciEvaluator {
-    private val tokenizerRegex = Regex(
-        """\s*(pi|phi|sqrt2|ans|asinh|acosh|atanh|asin|acos|atan|sinh|cosh|tanh|sin|cos|tan|sqrt|ln|log|exp|abs)\s*\(|""" +
-        """\s*(\d+\.?\d*|\.\d+)\s*|""" +
-        """\s*([A-DX-YM])\s*|""" +
-        """\s*([+\-*/^!(),])\s*"""
+    // 常量 Token
+    private val CONST_TOKENS = setOf("pi", "phi", "sqrt2", "ans")
+    // 函数 Token（带括号）
+    private val FUNC_TOKENS = setOf(
+        "sin(", "cos(", "tan(", "asin(", "acos(", "atan(",
+        "sinh(", "cosh(", "tanh(", "asinh(", "acosh(", "atanh(",
+        "sin_d(", "cos_d(", "tan_d(", "asin_d(", "acos_d(", "atan_d(",
+        "ln(", "log(", "exp(", "sqrt(", "abs(",
     )
+    // 变量 Token
+    private val VAR_TOKENS = setOf("A", "B", "C", "D", "X", "Y", "M")
 
     fun eval(expr: String, radianMode: Boolean, vars: Map<String, Double>, ans: Double): Double {
         val processed = preprocess(expr, radianMode)
-        val tokens = tokenizerRegex.findAll(processed).map { it.value.trim() }.filter { it.isNotEmpty() }.toList()
-        if (tokens.isEmpty()) throw IllegalArgumentException("表达式为空")
+        val rawTokens = tokenize(processed)
+        if (rawTokens.isEmpty()) throw IllegalArgumentException("表达式为空")
+        val tokens = injectImplicitMultiplication(rawTokens)
         val parser = SciParser(tokens, vars, ans)
         val result = parser.parseExpr()
         if (parser.pos != tokens.size) throw IllegalArgumentException("表达式不完整")
         if (result.isNaN() || result.isInfinite()) throw IllegalArgumentException("计算结果无效")
         return result
+    }
+
+    private fun tokenize(input: String): List<String> {
+        val tokens = mutableListOf<String>()
+        var i = 0
+        while (i < input.length) {
+            val c = input[i]
+            when {
+                c.isWhitespace() -> i++
+                c.isDigit() || c == '.' -> {
+                    val start = i
+                    if (c == '.') i++
+                    while (i < input.length && (input[i].isDigit() || input[i] == '.')) i++
+                    // 科学计数法处理 1e5 或 1.5e-3
+                    if (i < input.length && (input[i] == 'e' || input[i] == 'E')) {
+                        // 确保这不是单词 "e" 或 "exp" 开头
+                        if (i + 1 >= input.length || !input[i + 1].isLetter()) {
+                            i++
+                            if (i < input.length && (input[i] == '+' || input[i] == '-')) i++
+                            while (i < input.length && input[i].isDigit()) i++
+                        }
+                    }
+                    tokens.add(input.substring(start, i))
+                }
+                c.isLetter() -> {
+                    val start = i
+                    while (i < input.length && (input[i].isLetter() || input[i].isDigit())) i++
+                    val word = input.substring(start, i).lowercase()
+                    val originalWord = input.substring(start, i)
+                    // 检查是否紧跟 "("
+                    val hasParen = i < input.length && input[i] == '('
+                    // 尝试匹配常量或函数
+                    when {
+                        // 特殊长 token：sqrt2 (5字符，不以括号结尾)
+                        word == "sqrt2" -> { tokens.add("sqrt2") }
+                        // 带括号的函数：直接组合 word + "("
+                        hasParen -> {
+                            val fullToken = word + "("
+                            when (fullToken) {
+                                "sin(", "cos(", "tan(", "asin(", "acos(", "atan(",
+                                "sinh(", "cosh(", "tanh(", "asinh(", "acosh(", "atanh(",
+                                "sin_d(", "cos_d(", "tan_d(", "asin_d(", "acos_d(", "atan_d(",
+                                "ln(", "log(", "exp(", "sqrt(", "abs(" -> {
+                                    tokens.add(fullToken)
+                                    i++ // 跳过 '('
+                                }
+                                else -> {
+                                    // word 后面跟了 ( 但不是已知函数，可能是隐式乘法 sin( 但 sin 不是函数？
+                                    // 回退：把 word 当普通 token
+                                    tokens.add(originalWord)
+                                }
+                            }
+                        }
+                        // 常量/变量识别（不带括号）
+                        word == "pi" -> { tokens.add("pi") }
+                        word == "phi" -> { tokens.add("phi") }
+                        word == "ans" -> { tokens.add("ans") }
+                        // 单个变量 A-Z
+                        originalWord.length == 1 && originalWord in VAR_TOKENS -> {
+                            tokens.add(originalWord)
+                        }
+                        // 独立 'e' (自然对数底)
+                        word == "e" -> { tokens.add("e") }
+                        else -> throw IllegalArgumentException("未知标识符: $originalWord")
+                    }
+                }
+                c == '+' || c == '-' || c == '*' || c == '/' || c == '^' || c == '!' ||
+                c == '(' || c == ')' || c == ',' -> {
+                    tokens.add(c.toString())
+                    i++
+                }
+                else -> throw IllegalArgumentException("非法字符: $c")
+            }
+        }
+        return tokens
+    }
+
+    // 隐式乘法：在需要的地方插入 "*"
+    private fun injectImplicitMultiplication(tokens: List<String>): List<String> {
+        if (tokens.size <= 1) return tokens
+        val result = mutableListOf<String>()
+        for (idx in tokens.indices) {
+            val token = tokens[idx]
+            result.add(token)
+            if (idx == tokens.size - 1) break
+            val next = tokens[idx + 1]
+            // 检查前一个 token 是否是"值"
+            val isValue = isValueLike(token)
+            // 检查后一个 token 是否是"起始"
+            val isStart = isStartLike(next)
+            if (isValue && isStart) {
+                // 避免在运算符之间插入乘号
+                if (token in setOf("+", "-", "*", "/", "^", "!", "(")) continue
+                result.add("*")
+            }
+        }
+        return result
+    }
+
+    private fun isValueLike(t: String): Boolean {
+        if (t == ")" || t == "!") return true
+        if (t[0].isDigit() || t.startsWith(".")) return true
+        if (t in CONST_TOKENS) return true
+        if (t in VAR_TOKENS) return true
+        if (t == "e") return true
+        return false
+    }
+
+    private fun isStartLike(t: String): Boolean {
+        if (t == "(") return true
+        if (t.startsWith("sin(") || t.startsWith("cos(") || t.startsWith("tan(")) return true
+        if (t.startsWith("asin(") || t.startsWith("acos(") || t.startsWith("atan(")) return true
+        if (t.startsWith("sinh(") || t.startsWith("cosh(") || t.startsWith("tanh(")) return true
+        if (t.startsWith("asinh(") || t.startsWith("acosh(") || t.startsWith("atanh(")) return true
+        if (t.startsWith("sin_d(") || t.startsWith("cos_d(") || t.startsWith("tan_d(")) return true
+        if (t.startsWith("asin_d(") || t.startsWith("acos_d(") || t.startsWith("atan_d(")) return true
+        if (t.startsWith("ln(") || t.startsWith("log(") || t.startsWith("exp(")) return true
+        if (t.startsWith("sqrt(") || t.startsWith("abs(")) return true
+        if (t[0].isDigit() || t.startsWith(".")) return true
+        if (t in CONST_TOKENS) return true
+        if (t in VAR_TOKENS) return true
+        if (t == "e") return true
+        return false
     }
 
     private fun preprocess(raw: String, radianMode: Boolean): String {
@@ -259,7 +436,12 @@ private object SciEvaluator {
             while (pos < tokens.size) {
                 when (tokens[pos]) {
                     "*" -> { pos++; r *= parseFactor() }
-                    "/" -> { pos++; r /= parseFactor() }
+                    "/" -> {
+                        pos++
+                        val divisor = parseFactor()
+                        if (divisor == 0.0) throw ArithmeticException("除数不能为零")
+                        r /= divisor
+                    }
                     else -> break
                 }
             }
@@ -301,6 +483,7 @@ private object SciEvaluator {
                 t == "pi" -> { pos++; PI }
                 t == "phi" -> { pos++; (1.0 + sqrt(5.0)) / 2.0 }
                 t == "sqrt2" -> { pos++; sqrt(2.0) }
+                t == "e" -> { pos++; exp(1.0) }
                 t.startsWith("sin(") -> parseFunc(t) { a -> sin(a) }
                 t.startsWith("cos(") -> parseFunc(t) { a -> cos(a) }
                 t.startsWith("tan(") -> parseFunc(t) { a -> tan(a) }
