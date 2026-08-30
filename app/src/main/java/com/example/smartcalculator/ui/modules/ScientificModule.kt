@@ -99,6 +99,7 @@ data class ScientificModuleState(
     val variables: Map<String, Double> = emptyMap(),
     val ans: Double = 0.0,
     val storeMode: Boolean = false,
+    val storePreview: String? = null,
 ) : ModuleState
 
 // 合法的存储变量名（用户可 STO 的字母）
@@ -183,26 +184,26 @@ internal fun reduceScientific(
     intent: ModuleIntent,
 ): ScientificModuleState = when (intent) {
     is ModuleIntent.Input -> state.inputToken(intent.value)
-    is ModuleIntent.Evaluate -> state.evaluate().copy(storeMode = false)
+    is ModuleIntent.Evaluate -> state.evaluate().copy(storeMode = false, storePreview = null)
     is ModuleIntent.Clear -> ScientificModuleState()
-    is ModuleIntent.Backspace -> state.backspaceToken().copy(storeMode = false)
+    is ModuleIntent.Backspace -> state.backspaceToken().copy(storeMode = false, storePreview = null)
     is ModuleIntent.Custom -> when (intent.key) {
-        "sci:mode" -> state.copy(radianMode = !state.radianMode)
-        "sci:shift" -> state.copy(shiftMode = !state.shiftMode, storeMode = false)
-        "sci:insertLog" -> state.insertLog()
+        "sci:mode" -> state.copy(radianMode = !state.radianMode, storePreview = null)
+        "sci:shift" -> state.copy(shiftMode = !state.shiftMode, storeMode = false, storePreview = null)
+        "sci:insertLog" -> state.insertLog().copy(storePreview = null)
         "sci:moveCursor" -> {
             val pos = (intent.payload as? Int) ?: state.expression.length
             state.copy(cursorPos = pos, cursorInBase = state.isCursorInBase(pos))
         }
         "sci:store" -> {
-            // 进入 STO 等待模式：等待用户选择目标变量（A/B/C/D/X/Y/M）
+            // 进入 STO 等待模式：显示 "值 ➔ ?" 提示用户选择变量
             val v = state.display.toDoubleOrNull()
-            if (v == null) state.copy(errorMsg = "无可存储的数值", storeMode = false)
-            else state.copy(storeMode = true, errorMsg = null)
+            if (v == null) state.copy(errorMsg = "无可存储的数值", storeMode = false, storePreview = null)
+            else state.copy(storeMode = true, storePreview = "➔ ?", errorMsg = null)
         }
         "sci:clearAllVars" -> {
             // CAV：一键清空所有变量
-            state.copy(variables = emptyMap(), storeMode = false, errorMsg = null)
+            state.copy(variables = emptyMap(), storeMode = false, storePreview = null, errorMsg = null)
         }
         else -> state
     }
@@ -281,18 +282,24 @@ private fun ScientificModuleState.inputToken(token: String): ScientificModuleSta
         return when {
             token in STORE_VAR_TOKENS -> {
                 val v = display.toDoubleOrNull()
-                if (v == null) copy(storeMode = false, errorMsg = "无可存储的数值")
+                if (v == null) copy(storeMode = false, storePreview = null, errorMsg = "无可存储的数值")
                 else copy(
                     variables = variables + (token to v),
                     storeMode = false,
+                    storePreview = "➔ $token",
                     errorMsg = null,
                 )
             }
             else -> {
                 // STO 模式下按了非变量键：取消 STO 模式，并把该 token 当作正常输入
-                copy(storeMode = false).inputToken(token)
+                copy(storeMode = false, storePreview = null).inputToken(token)
             }
         }
+    }
+
+    // 已显示 "➔ X"（STO 完成后的预览态）：下一次输入清掉 preview，恢复正常
+    if (storePreview != null) {
+        return copy(storePreview = null).inputToken(token)
     }
 
     if (errorMsg != null) {
@@ -1070,14 +1077,50 @@ private fun BoxScope.SciDisplay(state: ScientificModuleState, onIntent: (ModuleI
             }
         }
 
-        // 右下：计算结果
-        Text(
-            text = state.errorMsg ?: state.display,
-            style = resultStyle,
-            textAlign = TextAlign.End,
-            modifier = Modifier.fillMaxWidth(),
-            maxLines = 2,
-        )
+        // 右下：计算结果（有 storePreview 时显示 "值 ➔ 变量" 的形式）
+        val preview = state.storePreview
+        if (state.errorMsg != null) {
+            Text(
+                text = state.errorMsg,
+                style = resultStyle,
+                textAlign = TextAlign.End,
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 2,
+            )
+        } else if (preview != null) {
+            val arrowColor = MaterialTheme.colorScheme.primary
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = state.display,
+                    style = resultStyle,
+                    textAlign = TextAlign.End,
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = preview,
+                    style = resultStyle.copy(
+                        color = if (preview.endsWith("?") || preview == "➔ ?") {
+                            arrowColor.copy(alpha = 0.85f)
+                        } else {
+                            arrowColor
+                        }
+                    ),
+                    textAlign = TextAlign.End,
+                )
+            }
+        } else {
+            Text(
+                text = state.display,
+                style = resultStyle,
+                textAlign = TextAlign.End,
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 2,
+            )
+        }
     }
 }
 
