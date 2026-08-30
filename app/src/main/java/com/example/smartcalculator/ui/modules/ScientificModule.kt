@@ -112,7 +112,7 @@ private val STORE_VAR_TOKENS = setOf("A", "B", "C", "D", "X", "Y", "M")
 // 所有不可分割的 token（按长度降序排列）
 private val ATOMIC_TOKENS: List<String> = listOf(
     "log_10(", "log_2(", "log_e(",
-    "*10^(",
+    "10^(",
     "asinh(", "acosh(", "atanh(",
     "sinh(", "cosh(", "tanh(", "asin(", "acos(", "atan(",
     "sin(", "cos(", "tan(", "ln(", "exp(", "abs(",
@@ -373,6 +373,28 @@ private fun ScientificModuleState.inputToken(token: String): ScientificModuleSta
     // 容错 3：避免在空表达式时输入运算符
     if (expr.isEmpty() && token.length == 1 && token[0] in setOf('+', '*', '/', '^')) {
         return this
+    }
+
+    // 容错 5：插入 10^( 前，如果前面是数字/常量/变量/右括号，自动补 * 隐式乘号
+    // （避免 "3" + "10^(" → 变成 "310^(" 导致 310^x 而不是 3×10ˣ）
+    if (token == "10^(" && pos > 0) {
+        val charBefore = expr[pos - 1]
+        val needImplicitMul = charBefore.isDigit() || charBefore == '.' ||
+                charBefore == ')' || charBefore == '!' ||
+                charBefore.isLetter() // 包括常量 pi/e/phi/ans 和变量 A/B/C/...
+        if (needImplicitMul) {
+            val inserted = "*" + token
+            val newExpr = expr.substring(0, pos) + inserted + expr.substring(pos)
+            val newPos = pos + inserted.length
+            return copy(
+                expression = newExpr,
+                display = newExpr,
+                cursorPos = newPos,
+                cursorInBase = false,
+                justEvaluated = false,
+                errorMsg = null,
+            )
+        }
     }
 
     // 容错 4：输入 ( 时，如果光标前是 log_XXX，切换到参数区
@@ -1356,7 +1378,7 @@ private val SCI_FUNC_ITEMS = listOf(
     SciFuncItem("xʸ", "^", "^(1/", "y√x"),
     SciFuncItem("1/x", "1/(", "abs(", "|x|"),
     SciFuncItem("x!", "!", null, null),
-    SciFuncItem("×10ˣ", "*10^(", null, null),
+    SciFuncItem("10ˣ", "10^(", null, null),
     SciFuncItem("sinh", "sinh(", "asinh(", "sinh⁻¹"),
     SciFuncItem("cosh", "cosh(", "acosh(", "cosh⁻¹"),
     SciFuncItem("tanh", "tanh(", "atanh(", "tanh⁻¹"),
