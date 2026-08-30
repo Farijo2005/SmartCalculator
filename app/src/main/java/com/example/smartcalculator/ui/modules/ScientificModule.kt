@@ -98,7 +98,11 @@ data class ScientificModuleState(
     val errorMsg: String? = null,
     val variables: Map<String, Double> = emptyMap(),
     val ans: Double = 0.0,
+    val storeMode: Boolean = false,
 ) : ModuleState
+
+// 合法的存储变量名（用户可 STO 的字母）
+private val STORE_VAR_TOKENS = setOf("A", "B", "C", "D", "X", "Y", "M")
 
 // ============================================================
 //  Token Lists for Backspace (longest-match first)
@@ -179,27 +183,26 @@ internal fun reduceScientific(
     intent: ModuleIntent,
 ): ScientificModuleState = when (intent) {
     is ModuleIntent.Input -> state.inputToken(intent.value)
-    is ModuleIntent.Evaluate -> state.evaluate()
+    is ModuleIntent.Evaluate -> state.evaluate().copy(storeMode = false)
     is ModuleIntent.Clear -> ScientificModuleState()
-    is ModuleIntent.Backspace -> state.backspaceToken()
+    is ModuleIntent.Backspace -> state.backspaceToken().copy(storeMode = false)
     is ModuleIntent.Custom -> when (intent.key) {
         "sci:mode" -> state.copy(radianMode = !state.radianMode)
-        "sci:shift" -> state.copy(shiftMode = !state.shiftMode)
+        "sci:shift" -> state.copy(shiftMode = !state.shiftMode, storeMode = false)
         "sci:insertLog" -> state.insertLog()
         "sci:moveCursor" -> {
             val pos = (intent.payload as? Int) ?: state.expression.length
             state.copy(cursorPos = pos, cursorInBase = state.isCursorInBase(pos))
         }
         "sci:store" -> {
-            val v = state.display.toDoubleOrNull() ?: return state
-            state.copy(
-                variables = state.variables + (state.ans.toString() to v),
-                errorMsg = null,
-            )
+            // 进入 STO 等待模式：等待用户选择目标变量（A/B/C/D/X/Y/M）
+            val v = state.display.toDoubleOrNull()
+            if (v == null) state.copy(errorMsg = "无可存储的数值", storeMode = false)
+            else state.copy(storeMode = true, errorMsg = null)
         }
-        "sci:recall" -> {
-            val v = state.variables[state.ans.toString()]
-            if (v != null) state.inputToken(v.formatSci()) else state
+        "sci:clearAllVars" -> {
+            // CAV：一键清空所有变量
+            state.copy(variables = emptyMap(), storeMode = false, errorMsg = null)
         }
         else -> state
     }
@@ -273,6 +276,25 @@ private fun ScientificModuleState.updateLogBase(newBase: String): ScientificModu
 // ============ 通用输入逻辑 ============
 
 private fun ScientificModuleState.inputToken(token: String): ScientificModuleState {
+    // STO 模式下的处理：用户选择存储目标变量
+    if (storeMode) {
+        return when {
+            token in STORE_VAR_TOKENS -> {
+                val v = display.toDoubleOrNull()
+                if (v == null) copy(storeMode = false, errorMsg = "无可存储的数值")
+                else copy(
+                    variables = variables + (token to v),
+                    storeMode = false,
+                    errorMsg = null,
+                )
+            }
+            else -> {
+                // STO 模式下按了非变量键：取消 STO 模式，并把该 token 当作正常输入
+                copy(storeMode = false).inputToken(token)
+            }
+        }
+    }
+
     if (errorMsg != null) {
         return copy(errorMsg = null, display = token, expression = token, cursorPos = token.length, justEvaluated = false, cursorInBase = false)
     }
@@ -1203,7 +1225,7 @@ private fun BoxScope.SciKeypad(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             SciWheel1(state, onIntent, Modifier.fillMaxWidth())
-            SciWheel2(onIntent, Modifier.fillMaxWidth())
+            SciWheel2(state, onIntent, Modifier.fillMaxWidth())
 
             Column(
                 modifier = Modifier.fillMaxWidth().weight(1f),
@@ -1235,9 +1257,9 @@ private fun BoxScope.SciKeypad(
                     SciKey("5") { onIntent(ModuleIntent.Input("5")) }
                     SciKey("6") { onIntent(ModuleIntent.Input("6")) }
                     SciKey("×", SciKeyVariant.Operator) { onIntent(ModuleIntent.Input("*")) }
-                    SciKey(if (state.shiftMode) "RCL" else "STO", SciKeyVariant.Memory) {
+                    SciKey(if (state.shiftMode) "CAV" else "STO", SciKeyVariant.Memory) {
                         if (state.shiftMode) {
-                            onIntent(ModuleIntent.Custom("sci:recall"))
+                            onIntent(ModuleIntent.Custom("sci:clearAllVars"))
                         } else {
                             onIntent(ModuleIntent.Custom("sci:store"))
                         }
@@ -1353,10 +1375,9 @@ private val SCI_VAR_ITEMS = listOf(
 )
 
 @Composable
-private fun SciWheel2(onIntent: (ModuleIntent) -> Unit, modifier: Modifier = Modifier) {
+private fun SciWheel2(state: ScientificModuleState, onIntent: (ModuleIntent) -> Unit, modifier: Modifier = Modifier) {
     val scroll = rememberScrollState()
     val dark = isDarkTheme()
-    val contentColor = LocalContentColor.current
 
     Row(
         modifier = modifier
@@ -1367,7 +1388,12 @@ private fun SciWheel2(onIntent: (ModuleIntent) -> Unit, modifier: Modifier = Mod
         verticalAlignment = Alignment.CenterVertically,
     ) {
         SCI_VAR_ITEMS.forEach { item ->
+            // STO 模式下：常量禁用（不高亮），可存储变量高亮
+            val isStoreable = item.token in STORE_VAR_TOKENS
+            val highlight = state.storeMode && isStoreable
             val fg = when {
+                highlight && dark -> Color(0xFFFFD54F)
+                highlight -> Color(0xFFE65100)
                 dark && item.isConst -> Color(0xFFFFB74D)
                 dark -> Color(0xFFF48FB1)
                 item.isConst -> Color(0xFFE65100)
@@ -1376,6 +1402,7 @@ private fun SciWheel2(onIntent: (ModuleIntent) -> Unit, modifier: Modifier = Mod
             SciWheelButton(
                 label = item.label,
                 fgColor = fg,
+                highlight = highlight,
                 onClick = { onIntent(ModuleIntent.Input(item.token)) },
             )
         }
@@ -1391,6 +1418,7 @@ private fun SciWheelButton(
     label: String,
     fgColor: Color,
     onClick: () -> Unit,
+    highlight: Boolean = false,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -1403,16 +1431,29 @@ private fun SciWheelButton(
     val density = LocalDensity.current
     val shape = RoundedCornerShape(14.dp)
 
-    // 背景：深色 idle 完全透明；浅色保留淡玻璃底
+    // 背景：深色 idle 完全透明；浅色保留淡玻璃底；高亮时有明显底色
     val bgColor = when {
         pressed && dark -> fgColor.copy(alpha = 0.18f)
         pressed -> fgColor.copy(alpha = 0.28f)
+        highlight && dark -> fgColor.copy(alpha = 0.22f)
+        highlight -> fgColor.copy(alpha = 0.18f)
         dark -> Color.Transparent
         else -> Color.White.copy(alpha = 0.10f)
     }
-    // 边框：与主键盘一致，深色 1.2dp，浅色 1dp，颜色用前景色
-    val borderColor = fgColor.copy(alpha = if (dark) 0.55f else 0.65f)
-    val borderWidth = if (dark) 1.2.dp else 1.dp
+    // 边框：高亮时加粗、颜色更实
+    val borderColor = fgColor.copy(
+        alpha = when {
+            highlight && dark -> 0.95f
+            highlight -> 0.90f
+            dark -> 0.55f
+            else -> 0.65f
+        }
+    )
+    val borderWidth = when {
+        highlight -> if (dark) 2.2.dp else 2.dp
+        dark -> 1.2.dp
+        else -> 1.dp
+    }
 
     Box(
         modifier = Modifier
