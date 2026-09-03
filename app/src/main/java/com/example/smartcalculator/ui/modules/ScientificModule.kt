@@ -1,6 +1,7 @@
 package com.example.smartcalculator.ui.modules
 
 import android.view.HapticFeedbackConstants
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -71,6 +72,7 @@ import kotlin.math.asin
 import kotlin.math.atan
 import kotlin.math.cos
 import kotlin.math.exp
+import kotlin.math.floor
 import kotlin.math.ln
 import kotlin.math.log10
 import kotlin.math.pow
@@ -87,6 +89,9 @@ private fun tanh(x: Double): Double = sinh(x) / cosh(x)
 //  Scientific Module — State
 // ============================================================
 
+/** 显示格式：普通 / 科学计数法 / 分数 */
+enum class SciDisplayFormat { NORM, SCI, FRAC }
+
 data class ScientificModuleState(
     val display: String = "0",
     val expression: String = "",
@@ -100,6 +105,10 @@ data class ScientificModuleState(
     val ans: Double = 0.0,
     val storeMode: Boolean = false,
     val storePreview: String? = null,
+    val displayFormat: SciDisplayFormat = SciDisplayFormat.NORM,
+    val decimalPlaces: Int = 4,
+    val autoDecimal: Boolean = false,
+    val modePopupVisible: Boolean = false,
 ) : ModuleState
 
 // 合法的存储变量名（用户可 STO 的字母）
@@ -188,7 +197,18 @@ internal fun reduceScientific(
     is ModuleIntent.Clear -> ScientificModuleState()
     is ModuleIntent.Backspace -> state.backspaceToken().copy(storeMode = false, storePreview = null)
     is ModuleIntent.Custom -> when (intent.key) {
-        "sci:mode" -> state.copy(radianMode = !state.radianMode, storePreview = null)
+        "sci:mode" -> state.copy(modePopupVisible = !state.modePopupVisible, storePreview = null)
+        "sci:closeModePopup" -> state.copy(modePopupVisible = false)
+        "sci:setAngle" -> state.copy(radianMode = (intent.payload as? Boolean) ?: true, storePreview = null)
+        "sci:setFormat" -> {
+            val fmt = (intent.payload as? SciDisplayFormat) ?: SciDisplayFormat.NORM
+            state.copy(displayFormat = fmt, storePreview = null)
+        }
+        "sci:setDecimals" -> {
+            val n = (intent.payload as? Int) ?: state.decimalPlaces
+            state.copy(decimalPlaces = n.coerceIn(0, 10), autoDecimal = false, storePreview = null)
+        }
+        "sci:toggleAutoDecimal" -> state.copy(autoDecimal = !state.autoDecimal, storePreview = null)
         "sci:shift" -> state.copy(shiftMode = !state.shiftMode, storeMode = false, storePreview = null)
         "sci:insertLog" -> state.insertLog().copy(storePreview = null)
         "sci:moveCursor" -> {
@@ -494,7 +514,7 @@ private fun ScientificModuleState.backspaceToken(): ScientificModuleState {
     val pos = cursorPos.coerceIn(0, expression.length)
     if (pos == 0) return this
 
-    // 如果在 log 底数区域，特殊处理
+    // 如果在 log 底数区域，直接删除整个 log_N( token（含已输入的底数），与其他函数一致
     if (cursorInBase) {
         val tokens = parseToDisplayTokens(expression)
         for (token in tokens) {
@@ -502,17 +522,9 @@ private fun ScientificModuleState.backspaceToken(): ScientificModuleState {
                 val baseStart = token.start + 4
                 val baseEnd = token.end - 1
                 if (pos in baseStart..baseEnd) {
-                    val currentBase = expression.substring(baseStart, baseEnd)
-                    // 底数为空，删除整个 log_( token
-                    if (currentBase.isEmpty()) {
-                        val newExpr = expression.substring(0, token.start) + expression.substring(token.end)
-                        val newDisplay = if (newExpr.isEmpty()) "0" else newExpr
-                        return copy(expression = newExpr, display = newDisplay, cursorPos = token.start, cursorInBase = false, errorMsg = null)
-                    }
-                    // 删除最后一位
-                    val newBase = currentBase.dropLast(1)
-                    val newState = updateLogBase(newBase)
-                    return newState.copy(cursorPos = newState.cursorPos, cursorInBase = true)
+                    val newExpr = expression.substring(0, token.start) + expression.substring(token.end)
+                    val newDisplay = if (newExpr.isEmpty()) "0" else newExpr
+                    return copy(expression = newExpr, display = newDisplay, cursorPos = token.start, cursorInBase = false, errorMsg = null)
                 }
             }
         }
@@ -520,6 +532,17 @@ private fun ScientificModuleState.backspaceToken(): ScientificModuleState {
 
     val exprBefore = expression.substring(0, pos)
     val exprAfter = expression.substring(pos)
+
+    // 优先匹配动态 log_N( token（任意底数），整体删除
+    val dynTokens = parseToDisplayTokens(expression)
+    for (token in dynTokens) {
+        if (token.text.startsWith("log_") && token.text.endsWith("(") && token.end == pos) {
+            val newExpr = expression.substring(0, token.start) + expression.substring(token.end)
+            val newPos = token.start
+            val newDisplay = if (newExpr.isEmpty()) "0" else newExpr
+            return copy(expression = newExpr, display = newDisplay, cursorPos = newPos, cursorInBase = false, errorMsg = null)
+        }
+    }
 
     // 检查光标前是否有完整 token
     for (tok in ATOMIC_TOKENS) {
@@ -550,7 +573,7 @@ private fun ScientificModuleState.evaluate(): ScientificModuleState {
     if (expression.isBlank()) return this
     return try {
         val result = SciEvaluator.eval(expression, radianMode, variables, ans)
-        val formatted = result.formatSci()
+        val formatted = result.formatSci(displayFormat, decimalPlaces, autoDecimal)
         copy(
             display = formatted,
             expression = expression,
@@ -564,12 +587,96 @@ private fun ScientificModuleState.evaluate(): ScientificModuleState {
     }
 }
 
-private fun Double.formatSci(): String {
+private fun Double.formatSci(
+    displayFormat: SciDisplayFormat,
+    decimalPlaces: Int,
+    autoDecimal: Boolean,
+): String {
     if (isNaN() || isInfinite()) return "错误"
-    val rounded = round(this * 1e12) / 1e12
-    val l = rounded.toLong()
-    return if (abs(rounded - l) < 1e-9) l.toString()
-    else "%.10f".format(rounded).trimEnd('0').trimEnd('.')
+    return when {
+        displayFormat == SciDisplayFormat.FRAC -> toFractionStr()
+        autoDecimal -> {
+            // 自动：保留合适位数，去尾零
+            if (displayFormat == SciDisplayFormat.SCI) {
+                toExponentialStr(6)
+            } else {
+                val rounded = round(this * 1e12) / 1e12
+                val l = rounded.toLong()
+                if (abs(rounded - l) < 1e-9) l.toString()
+                else "%.10f".format(rounded).trimEnd('0').trimEnd('.')
+            }
+        }
+        displayFormat == SciDisplayFormat.SCI -> toExponentialStr(decimalPlaces)
+        else -> "%.${decimalPlaces}f".format(this)
+    }
+}
+
+/**
+ * 连分数逼近，将 Double 转为最简分数字符串。
+ * 分母上限 1000，误差小于 1e-9 时直接返回。
+ * 如 0.333... → "1/3"，3.14159... → "355/113"，2.5 → "5/2"
+ */
+private fun Double.toFractionStr(maxDenom: Int = 1000): String {
+    if (this == 0.0) return "0"
+    val sign = if (this < 0) "-" else ""
+    var x = abs(this)
+    // 整数部分
+    val intPart = x.toLong()
+    x -= intPart
+    if (x < 1e-12) return sign + intPart.toString()
+
+    // 连分数逼近小数部分
+    var h1 = 1L; var h0 = 0L
+    var k1 = 0L; var k0 = 1L
+    var b = x
+    var bestN = 0L; var bestD = 1L
+
+    for (i in 0 until 64) {
+        val a = b.toLong()
+        val h2 = a * h1 + h0
+        val k2 = a * k1 + k0
+        if (k2 > maxDenom) break
+        h0 = h1; h1 = h2
+        k0 = k1; k1 = k2
+        bestN = h1; bestD = k1
+        if (b - a < 1e-12) break
+        b = 1.0 / (b - a)
+    }
+
+    // 组合整数部分和分数部分
+    val totalN = intPart * bestD + bestN
+    return if (bestD == 1L) {
+        sign + (intPart + bestN).toString()
+    } else {
+        "$sign$totalN/$bestD"
+    }
+}
+
+/** 科学计数法格式化：如 3.1416×10⁴ */
+private fun Double.toExponentialStr(n: Int): String {
+    if (this == 0.0) return if (n == 0) "0×10⁰" else "0." + "0".repeat(n) + "×10⁰"
+    val exp = floor(log10(abs(this))).toInt()
+    val mantissa = this / 10.0.pow(exp)
+    val mantissaStr = "%.${n}f".format(mantissa)
+    val expStr = exp.toSuperscript()
+    return "${mantissaStr}×10$expStr"
+}
+
+/** 将整数转为上标 Unicode 字符串（如 -3 → ⁻³, 4 → ⁴） */
+private fun Int.toSuperscript(): String {
+    val map = charArrayOf('⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹')
+    if (this == 0) return "⁰"
+    val sb = StringBuilder()
+    var v = abs(this)
+    if (this < 0) sb.append('⁻')
+    val digits = CharArray(0)
+    val tmp = ArrayList<Char>()
+    while (v > 0) {
+        tmp.add(map[v % 10])
+        v /= 10
+    }
+    tmp.reversed().forEach { sb.append(it) }
+    return sb.toString()
 }
 
 // ============================================================
@@ -899,12 +1006,17 @@ fun ScientificModule(
     isLandscape: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    SciLayout(
-        isLandscape = isLandscape,
-        modifier = modifier,
-        display = { SciDisplay(state, onIntent) },
-        keypad = { SciKeypad(state, onIntent) },
-    )
+    Box(modifier = modifier) {
+        SciLayout(
+            isLandscape = isLandscape,
+            modifier = Modifier.fillMaxSize(),
+            display = { SciDisplay(state, onIntent) },
+            keypad = { SciKeypad(state, onIntent) },
+        )
+        if (state.modePopupVisible) {
+            SciModePopup(state, onIntent)
+        }
+    }
 }
 
 // ============================================================
@@ -1009,7 +1121,15 @@ private fun BoxScope.SciDisplay(state: ScientificModuleState, onIntent: (ModuleI
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
-                text = if (state.radianMode) "RAD" else "DEG",
+                text = buildString {
+                    append(if (state.radianMode) "RAD" else "DEG")
+                    append("  ")
+                    append(when (state.displayFormat) {
+                        SciDisplayFormat.NORM -> if (state.autoDecimal) "NORM·AUTO" else "NORM·F${state.decimalPlaces}"
+                        SciDisplayFormat.SCI -> if (state.autoDecimal) "SCI·AUTO" else "SCI·F${state.decimalPlaces}"
+                        SciDisplayFormat.FRAC -> "FRAC"
+                    })
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = LocalContentColor.current.copy(alpha = 0.45f),
             )
@@ -1561,6 +1681,373 @@ private fun SciWheelButton(
             fontWeight = FontWeight.SemiBold,
             color = fgColor,
             textAlign = TextAlign.Center,
+        )
+    }
+}
+
+// ============================================================
+//  MODE Popup
+// ============================================================
+
+@Composable
+private fun SciModePopup(
+    state: ScientificModuleState,
+    onIntent: (ModuleIntent) -> Unit,
+) {
+    val dark = isDarkTheme()
+    val primary = MaterialTheme.colorScheme.primary
+    val isFrac = state.displayFormat == SciDisplayFormat.FRAC
+    val previewText = PI.formatSci(state.displayFormat, state.decimalPlaces, state.autoDecimal)
+    val previewHint = when (state.displayFormat) {
+        SciDisplayFormat.FRAC -> "1/3 = " + (1.0 / 3.0).toFractionStr()
+        SciDisplayFormat.SCI -> "π 的科学计数法"
+        SciDisplayFormat.NORM -> if (state.autoDecimal) "π 的自动精度" else "π 的普通格式"
+    }
+
+    BackHandler { onIntent(ModuleIntent.Custom("sci:closeModePopup")) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) { onIntent(ModuleIntent.Custom("sci:closeModePopup")) },
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .shadow(
+                    elevation = if (dark) 10.dp else 8.dp,
+                    shape = RoundedCornerShape(20.dp),
+                    ambientColor = Color.Black.copy(alpha = if (dark) 0.35f else 0.1f),
+                    spotColor = Color.Black.copy(alpha = if (dark) 0.25f else 0.08f),
+                )
+                .clip(RoundedCornerShape(20.dp))
+                .background(
+                    if (dark) Color(0xFF2C2C2E).copy(alpha = 0.95f)
+                    else Color.White.copy(alpha = 0.96f)
+                )
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) { /* 消费点击，防止穿透到背景 */ }
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            // 标题
+            Text(
+                text = "MODE 设置",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = LocalContentColor.current,
+            )
+
+            // 角度制
+            SciPopupLabel("角度制")
+            SciPopupSegmented(
+                options = listOf("RAD 弧度", "DEG 角度"),
+                selectedIndex = if (state.radianMode) 0 else 1,
+            ) { index ->
+                onIntent(ModuleIntent.Custom("sci:setAngle", index == 0))
+            }
+
+            // 显示格式
+            SciPopupLabel("显示格式")
+            SciPopupSegmented(
+                options = listOf("普通", "科学", "分数"),
+                selectedIndex = when (state.displayFormat) {
+                    SciDisplayFormat.NORM -> 0
+                    SciDisplayFormat.SCI -> 1
+                    SciDisplayFormat.FRAC -> 2
+                },
+            ) { index ->
+                val fmt = when (index) {
+                    0 -> SciDisplayFormat.NORM
+                    1 -> SciDisplayFormat.SCI
+                    else -> SciDisplayFormat.FRAC
+                }
+                onIntent(ModuleIntent.Custom("sci:setFormat", fmt))
+            }
+
+            // 小数位数
+            SciPopupLabel("小数位数")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                SciPopupCircleButton(
+                    label = "−",
+                    enabled = !isFrac && !state.autoDecimal && state.decimalPlaces > 0,
+                ) {
+                    onIntent(ModuleIntent.Custom("sci:setDecimals", state.decimalPlaces - 1))
+                }
+                Text(
+                    text = if (isFrac) "—" else if (state.autoDecimal) "自动" else state.decimalPlaces.toString(),
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = LocalContentColor.current.copy(alpha = if (isFrac) 0.3f else 1f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.width(28.dp),
+                )
+                SciPopupCircleButton(
+                    label = "＋",
+                    enabled = !isFrac && !state.autoDecimal && state.decimalPlaces < 10,
+                ) {
+                    onIntent(ModuleIntent.Custom("sci:setDecimals", state.decimalPlaces + 1))
+                }
+                Text(
+                    text = "位",
+                    fontSize = 12.sp,
+                    color = LocalContentColor.current.copy(alpha = if (isFrac) 0.2f else 0.45f),
+                )
+                Spacer(Modifier.weight(1f))
+                SciPopupAutoCapsule(
+                    active = state.autoDecimal,
+                    enabled = !isFrac,
+                ) {
+                    onIntent(ModuleIntent.Custom("sci:toggleAutoDecimal"))
+                }
+            }
+
+            // 预览条
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (dark) Color.Transparent
+                        else Color(0xFFEFEFF2).copy(alpha = 0.5f)
+                    )
+                    .then(
+                        if (dark) Modifier.border(
+                            1.dp, Color.White.copy(alpha = 0.08f),
+                            RoundedCornerShape(8.dp),
+                        ) else Modifier
+                    )
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "预览:",
+                    fontSize = 12.sp,
+                    color = LocalContentColor.current.copy(alpha = 0.45f),
+                )
+                Column {
+                    Text(
+                        text = previewText,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = primary,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    )
+                    Text(
+                        text = previewHint,
+                        fontSize = 11.sp,
+                        color = LocalContentColor.current.copy(alpha = 0.4f),
+                    )
+                }
+            }
+
+            // 确定按钮
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                SciPopupConfirmButton {
+                    onIntent(ModuleIntent.Custom("sci:closeModePopup"))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SciPopupLabel(text: String) {
+    Text(
+        text = text,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+        color = LocalContentColor.current.copy(alpha = 0.45f),
+        letterSpacing = 0.5.sp,
+    )
+}
+
+@Composable
+private fun SciPopupSegmented(
+    options: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+) {
+    val dark = isDarkTheme()
+    val primary = MaterialTheme.colorScheme.primary
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(50))
+            .background(
+                if (dark) Color(0xFF2C2C2E).copy(alpha = 0.5f)
+                else Color(0xFFEFEFF2).copy(alpha = 0.5f)
+            )
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        options.forEachIndexed { index, label ->
+            val selected = index == selectedIndex
+            val fgColor = if (selected) {
+                if (dark) primary else Color.White
+            } else {
+                LocalContentColor.current.copy(alpha = 0.5f)
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(50))
+                    .background(if (selected && !dark) primary else Color.Transparent)
+                    .then(
+                        if (selected && dark) Modifier.border(1.2.dp, primary, RoundedCornerShape(50))
+                        else Modifier
+                    )
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { onSelect(index) }
+                    .padding(vertical = 8.dp, horizontal = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    label,
+                    fontSize = 13.sp,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                    color = fgColor,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SciPopupCircleButton(
+    label: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    val dark = isDarkTheme()
+    val borderColor = if (dark) Color.White.copy(alpha = if (enabled) 0.12f else 0.04f)
+    else Color.Black.copy(alpha = if (enabled) 0.12f else 0.04f)
+
+    Box(
+        modifier = Modifier
+            .height(36.dp)
+            .width(36.dp)
+            .clip(RoundedCornerShape(50))
+            .background(
+                if (dark) Color.Transparent
+                else Color.White.copy(alpha = if (enabled) 0.1f else 0.03f)
+            )
+            .border(1.dp, borderColor, RoundedCornerShape(50))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                enabled = enabled,
+            ) { onClick() },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            color = LocalContentColor.current.copy(alpha = if (enabled) 0.95f else 0.3f),
+        )
+    }
+}
+
+@Composable
+private fun SciPopupAutoCapsule(
+    active: Boolean,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    val dark = isDarkTheme()
+    val primary = MaterialTheme.colorScheme.primary
+
+    val fgColor = if (!enabled) {
+        LocalContentColor.current.copy(alpha = 0.2f)
+    } else if (active) {
+        if (dark) primary else Color.White
+    } else {
+        LocalContentColor.current.copy(alpha = 0.5f)
+    }
+
+    Box(
+        modifier = Modifier
+            .height(36.dp)
+            .clip(RoundedCornerShape(50))
+            .background(if (active && enabled && !dark) primary else Color.Transparent)
+            .then(
+                if (active && enabled && dark) Modifier.border(1.2.dp, primary, RoundedCornerShape(50))
+                else if (!active && enabled) Modifier.border(
+                    1.dp,
+                    if (dark) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.12f),
+                    RoundedCornerShape(50),
+                )
+                else if (!enabled) Modifier.border(
+                    1.dp,
+                    if (dark) Color.White.copy(alpha = 0.04f) else Color.Black.copy(alpha = 0.04f),
+                    RoundedCornerShape(50),
+                )
+                else Modifier
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                enabled = enabled,
+            ) { onClick() }
+            .padding(horizontal = 20.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "自动",
+            fontSize = 14.sp,
+            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+            color = fgColor,
+        )
+    }
+}
+
+@Composable
+private fun SciPopupConfirmButton(
+    onClick: () -> Unit,
+) {
+    val dark = isDarkTheme()
+    val primary = MaterialTheme.colorScheme.primary
+    val fgColor = if (dark) primary else Color.White
+
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (dark) Color.Transparent else primary)
+            .then(
+                if (dark) Modifier.border(1.2.dp, primary, RoundedCornerShape(50))
+                else Modifier
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) { onClick() }
+            .padding(horizontal = 24.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "确定",
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            color = fgColor,
         )
     }
 }
