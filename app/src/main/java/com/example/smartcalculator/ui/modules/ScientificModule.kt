@@ -252,14 +252,14 @@ private fun ScientificModuleState.isCursorInBase(pos: Int): Boolean {
 
 private fun ScientificModuleState.updateLogBase(newBase: String): ScientificModuleState {
     val tokens = parseToDisplayTokens(expression)
-    var expr = expression
-    var offset = 0
     for (token in tokens) {
         if (token.text.startsWith("log_") && token.text.endsWith("(")) {
-            val baseStart = token.start + 4 + offset // "+4" 跳过 "log_"
-            val baseEnd = token.end - 1 + offset // "-1" 跳过 "("
-            val before = expr.substring(0, baseStart)
-            val after = expr.substring(baseEnd)
+            val baseStart = token.start + 4 // "+4" 跳过 "log_"
+            val baseEnd = token.end - 1 // "-1" 跳过 "("
+            // 只更新光标当前所在的那个 log 的底数，避免多个 log 时改到第一个
+            if (cursorPos !in baseStart..baseEnd) continue
+            val before = expression.substring(0, baseStart)
+            val after = expression.substring(baseEnd)
             val replaced = before + newBase + after
             val newCursor = before.length + newBase.length
             return copy(
