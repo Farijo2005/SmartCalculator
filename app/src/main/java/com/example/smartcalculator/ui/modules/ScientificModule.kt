@@ -1719,10 +1719,10 @@ private fun SciModePopup(
             modifier = Modifier
                 .fillMaxWidth(0.92f)
                 .shadow(
-                    elevation = if (dark) 10.dp else 8.dp,
+                    elevation = if (dark) 32.dp else 24.dp,
                     shape = RoundedCornerShape(20.dp),
-                    ambientColor = Color.Black.copy(alpha = if (dark) 0.35f else 0.1f),
-                    spotColor = Color.Black.copy(alpha = if (dark) 0.25f else 0.08f),
+                    ambientColor = Color.Black.copy(alpha = if (dark) 0.85f else 0.4f),
+                    spotColor = Color.Black.copy(alpha = if (dark) 0.75f else 0.35f),
                 )
                 .clip(RoundedCornerShape(20.dp))
                 .background(
@@ -1786,11 +1786,13 @@ private fun SciModePopup(
                 }
                 Text(
                     text = if (isFrac) "—" else if (state.autoDecimal) "自动" else state.decimalPlaces.toString(),
-                    fontSize = 20.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     color = LocalContentColor.current.copy(alpha = if (isFrac) 0.3f else 1f),
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.width(28.dp),
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.width(48.dp),
                 )
                 SciPopupCircleButton(
                     label = "＋",
